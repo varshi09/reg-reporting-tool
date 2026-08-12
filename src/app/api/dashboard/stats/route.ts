@@ -49,9 +49,12 @@ export async function GET() {
 
   let reportsGenerated = 0;
   let submittedToCbuae = 0;
+  const reportDetails: { title: string; href: string; generated: boolean }[] = [];
   for (const report of reports) {
-    if (await hasDataForPeriod(report.table, yearMonthPrefix)) reportsGenerated += 1;
+    const generated = await hasDataForPeriod(report.table, yearMonthPrefix);
+    if (generated) reportsGenerated += 1;
     if (await hasSubmissionForPeriod(report.href, yearMonthPrefix)) submittedToCbuae += 1;
+    reportDetails.push({ title: report.title, href: report.href, generated });
   }
 
   return NextResponse.json({
@@ -59,5 +62,6 @@ export async function GET() {
     reportsGenerated,
     submittedToCbuae,
     totalReports: reports.length,
+    reportDetails,
   });
 }
