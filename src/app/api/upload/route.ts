@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { Readable } from "node:stream";
-import ExcelJS from "exceljs";
 import oracledb from "oracledb";
 import { withConnection } from "@/lib/db";
-import { detectUploadTable, normalizeHeader } from "@/lib/uploadTables";
+import { getUploadTable } from "@/lib/uploadTables";
+import { parseUploadFile } from "@/lib/uploadParser";
 
 async function logUpload(entry: {
   targetTable: string;
@@ -29,7 +28,7 @@ export async function POST(request: Request) {
   const file = formData.get("file");
   const timeKey = String(formData.get("timeKey") ?? "");
   const uploadedBy = String(formData.get("uploadedBy") ?? "");
-  const confirmedTable = formData.get("confirmedTable");
+  const targetTable = String(formData.get("targetTable") ?? "");
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file uploaded." }, { status: 400 });
@@ -46,102 +45,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing uploaded_by." }, { status: 400 });
   }
 
-  const originalFileName = file.name;
-  const lowerFileName = file.name.toLowerCase();
-  const isXlsx = lowerFileName.endsWith(".xlsx");
-  const isCsv = lowerFileName.endsWith(".csv");
-
-  if (!isXlsx && !isCsv) {
-    return NextResponse.json(
-      { error: "Only .xlsx or .csv files are accepted." },
-      { status: 400 }
-    );
-  }
-
-  const table = detectUploadTable(originalFileName);
+  // The table name is interpolated into the INSERT below, so it must be the
+  // key of a whitelisted config entry — never the raw request value.
+  const table = getUploadTable(targetTable);
   if (!table) {
     return NextResponse.json(
-      {
-        error:
-          "Could not determine which table this file belongs to from its name.",
-      },
+      { error: "Unknown data type. Choose a data type from the list." },
       { status: 400 }
     );
   }
 
-  if (confirmedTable !== table.key) {
-    return NextResponse.json(
-      { error: "Target table did not match the confirmed table." },
-      { status: 400 }
-    );
+  const originalFileName = file.name;
+
+  const parseResult = await parseUploadFile(file, table);
+  if (!parseResult.ok) {
+    return NextResponse.json({ error: parseResult.error }, { status: 400 });
   }
 
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const workbook = new ExcelJS.Workbook();
-  let worksheet: ExcelJS.Worksheet | undefined;
-
-  if (isXlsx) {
-    await workbook.xlsx.load(buffer);
-    worksheet = workbook.worksheets[0];
-  } else {
-    worksheet = await workbook.csv.read(Readable.from(buffer));
-  }
-
-  if (!worksheet) {
-    return NextResponse.json(
-      { error: "The file has no worksheet." },
-      { status: 400 }
-    );
-  }
-
-  const headerRow = worksheet.getRow(1);
-  const columnIndexes = new Map<string, number>();
-  headerRow.eachCell((cell, colNumber) => {
-    const header = normalizeHeader(cell.value);
-    const match = table.columns.find((c) => c.header === header);
-    if (match) columnIndexes.set(match.column, colNumber);
-  });
-
-  const missingColumns = table.columns.filter(
-    (c) => !columnIndexes.has(c.column)
-  );
-  if (missingColumns.length > 0) {
-    return NextResponse.json(
-      {
-        error: `The file must have header columns: ${table.columns
-          .map((c) => c.column)
-          .join(", ")}.`,
-      },
-      { status: 400 }
-    );
-  }
-
-  const rows: Record<string, string>[] = [];
-  const skipped: { row: number; reason: string }[] = [];
-
-  for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
-    const row = worksheet.getRow(rowNumber);
-    const record: Record<string, string> = {};
-    let hasAnyValue = false;
-    let missingRequired = false;
-
-    for (const col of table.columns) {
-      const colIndex = columnIndexes.get(col.column)!;
-      const value = String(row.getCell(colIndex).value ?? "").trim();
-      if (value) hasAnyValue = true;
-      else missingRequired = true;
-      record[col.column] = value;
-    }
-
-    if (!hasAnyValue) continue;
-
-    if (missingRequired) {
-      skipped.push({ row: rowNumber, reason: "Missing required field." });
-      continue;
-    }
-
-    rows.push(record);
-  }
+  const { rows, skipped } = parseResult.parsed;
 
   if (rows.length === 0) {
     await logUpload({
