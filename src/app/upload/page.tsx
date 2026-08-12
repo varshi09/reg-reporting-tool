@@ -109,11 +109,17 @@ export default function UploadPage() {
     acceptFile(fileInputRef.current?.files?.[0]);
   }
 
-  function clearFile() {
+  // Resets the chosen file without touching `result`, so the post-load status
+  // card stays visible after a successful upload.
+  function resetFileSelection() {
     setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function clearFile() {
+    resetFileSelection();
     setError("");
     setResult(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   function handleDragOver(event: DragEvent<HTMLDivElement>) {
@@ -201,7 +207,7 @@ export default function UploadPage() {
       }
 
       setResult(data);
-      clearFile();
+      resetFileSelection();
       loadHistory();
     } catch {
       setError("Upload failed. Check your connection and try again.");
