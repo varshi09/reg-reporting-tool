@@ -5,12 +5,14 @@ export type UploadColumn = {
 };
 
 export type UploadTableConfig = {
-  key: string; // table name in Oracle; also the required file name prefix
+  key: string; // table name in Oracle
   label: string;
   columns: UploadColumn[];
 };
 
-// File name must be exactly "<TABLE_KEY>_YYYYMMDD.xlsx" or ".csv" (case-insensitive).
+// The destination table is chosen explicitly by the user (data type dropdown),
+// not inferred from the file name. File names may be anything; only the
+// extension (.xlsx / .csv) is enforced.
 export const UPLOAD_TABLES: UploadTableConfig[] = [
   {
     key: "DIM_CUSTOMER",
@@ -22,12 +24,11 @@ export const UPLOAD_TABLES: UploadTableConfig[] = [
   },
 ];
 
-export function fileNamePattern(key: string): RegExp {
-  return new RegExp(`^${key}_\\d{8}\\.(xlsx|csv)$`, "i");
-}
-
-export function detectUploadTable(fileName: string): UploadTableConfig | null {
-  return UPLOAD_TABLES.find((t) => fileNamePattern(t.key).test(fileName)) ?? null;
+// Resolves a caller-supplied table key against the static config above.
+// Never trust a request body key directly — SQL is built from the resolved
+// config's `key`, so it must come from this whitelist.
+export function getUploadTable(key: string): UploadTableConfig | null {
+  return UPLOAD_TABLES.find((t) => t.key === key) ?? null;
 }
 
 export function normalizeHeader(value: unknown): string {
