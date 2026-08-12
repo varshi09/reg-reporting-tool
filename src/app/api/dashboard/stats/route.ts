@@ -68,7 +68,6 @@ export async function GET() {
     reportDetails,
     cycleLabel: period.cycleLabel,
     periodLabel: period.periodLabel,
-    periodDateLabel: period.periodDateLabel,
     periodTimeKey: period.timeKey,
   });
 }
