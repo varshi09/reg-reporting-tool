@@ -5,6 +5,7 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const targetTable = params.get("targetTable");
   const timeKey = params.get("timeKey");
+  const timeKeyPrefix = params.get("timeKeyPrefix");
   const uploadedBy = params.get("uploadedBy");
   const limit = params.has("limit") ? Number(params.get("limit")) : 20;
 
@@ -22,6 +23,12 @@ export async function GET(request: Request) {
   if (uploadedBy) {
     conditions.push("uploaded_by = :uploadedBy");
     binds.uploadedBy = uploadedBy;
+  }
+  // Filters on the reporting period the DATA belongs to (time_key), not on
+  // when the file happened to be uploaded.
+  if (timeKeyPrefix) {
+    conditions.push("time_key LIKE :timeKeyPrefix");
+    binds.timeKeyPrefix = `${timeKeyPrefix}%`;
   }
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";

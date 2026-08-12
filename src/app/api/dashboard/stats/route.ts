@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withConnection } from "@/lib/db";
 import { REPORT_CATEGORIES } from "@/lib/reportCategories";
+import { getReportingPeriod } from "@/lib/reportingPeriod";
 
 // Report identity here comes only from our own static config
 // (reportCategories.ts), never from user input, so interpolating the table
@@ -44,8 +45,10 @@ export async function GET() {
 
   const reports = getSubmittableReports();
 
-  const now = new Date();
-  const yearMonthPrefix = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  // A cycle run this month reports last month-end's data — see
+  // src/lib/reportingPeriod.ts.
+  const period = getReportingPeriod();
+  const yearMonthPrefix = period.monthPrefix;
 
   let reportsGenerated = 0;
   let submittedToCbuae = 0;
@@ -63,5 +66,9 @@ export async function GET() {
     submittedToCbuae,
     totalReports: reports.length,
     reportDetails,
+    cycleLabel: period.cycleLabel,
+    periodLabel: period.periodLabel,
+    periodDateLabel: period.periodDateLabel,
+    periodTimeKey: period.timeKey,
   });
 }

@@ -6,6 +6,7 @@ import AppShell from "@/components/AppShell";
 import { IconFolder } from "@/components/icons";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { UPLOAD_TABLES } from "@/lib/uploadTables";
+import { getReportingPeriod } from "@/lib/reportingPeriod";
 import type { ValidationIssue } from "@/lib/uploadParser";
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -69,12 +70,18 @@ export default function UploadPage() {
   const [showResultModal, setShowResultModal] = useState(false);
   const [history, setHistory] = useState<LogEntry[]>([]);
 
+  // History is scoped to the data of the current reporting period (the
+  // previous month-end), matched on time_key rather than upload timestamp.
+  const period = getReportingPeriod();
+
   const loadHistory = useCallback(async () => {
-    const response = await fetch("/api/upload-log");
+    const response = await fetch(
+      `/api/upload-log?timeKeyPrefix=${period.monthPrefix}`
+    );
     if (!response.ok) return;
     const data = await response.json();
     setHistory(data.entries ?? []);
-  }, []);
+  }, [period.monthPrefix]);
 
   useEffect(() => {
     loadHistory();
@@ -419,6 +426,10 @@ export default function UploadPage() {
           <p className="mt-3 text-sm font-semibold text-zinc-900">
             Upload history
           </p>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            Showing uploads for the current reporting period — data as at{" "}
+            {period.periodDateLabel}.
+          </p>
           {history.length === 0 ? (
             <p className="mt-2 text-sm text-zinc-500">
               No uploads yet.
@@ -501,14 +512,16 @@ export default function UploadPage() {
             </div>
 
             {preview.skipped.length > 0 && (
-              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2">
-                <p className="text-xs font-semibold text-amber-700">
-                  {preview.skipped.length} row
-                  {preview.skipped.length === 1 ? "" : "s"} will be skipped
+              <div className="mt-3 rounded-md border border-red-200 bg-red-50/60 px-3 py-2">
+                <p className="text-xs font-semibold text-red-700">
+                  {preview.skipped.length} record
+                  {preview.skipped.length === 1 ? "" : "s"} must be fixed before
+                  this file can be loaded
                 </p>
-                <p className="mt-0.5 text-xs text-zinc-500">
-                  These will not be loaded. Fix them in the file and re-upload
-                  if they are needed.
+                <p className="mt-0.5 text-xs text-zinc-600">
+                  The load is all-or-nothing, so nothing will be written while
+                  any record has a problem. Correct these in the file and upload
+                  it again.
                 </p>
                 <ul className="mt-1.5 max-h-32 overflow-y-auto text-xs text-zinc-700">
                   {preview.skipped.map((s, i) => (
@@ -557,7 +570,12 @@ export default function UploadPage() {
               </button>
               <button
                 onClick={handleConfirmUpload}
-                disabled={isUploading}
+                disabled={isUploading || preview.skipped.length > 0}
+                title={
+                  preview.skipped.length > 0
+                    ? "Fix the listed records first — the load is all-or-nothing."
+                    : undefined
+                }
                 className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
               >
                 {isUploading ? "Loading..." : "Confirm & load"}

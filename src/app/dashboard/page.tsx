@@ -42,10 +42,6 @@ const QUICK_ACTIONS = [
   },
 ] as const;
 
-const CYCLE_LABEL = new Date().toLocaleDateString(undefined, {
-  month: "long",
-  year: "numeric",
-});
 
 type ReportDetail = { title: string; href: string; generated: boolean };
 
@@ -54,6 +50,10 @@ export default function DashboardPage() {
   const [reportsGenerated, setReportsGenerated] = useState<number | null>(null);
   const [submittedToCbuae, setSubmittedToCbuae] = useState<number | null>(null);
   const [totalReports, setTotalReports] = useState<number | null>(null);
+  // Period labels come from the API so the dashboard and the backend can
+  // never disagree about which reporting period is current.
+  const [cycleLabel, setCycleLabel] = useState("");
+  const [periodDateLabel, setPeriodDateLabel] = useState("");
   const [reportDetails, setReportDetails] = useState<ReportDetail[]>([]);
   const [showReportsModal, setShowReportsModal] = useState(false);
 
@@ -65,6 +65,8 @@ export default function DashboardPage() {
       setReportsGenerated(data.reportsGenerated ?? 0);
       setSubmittedToCbuae(data.submittedToCbuae ?? 0);
       setTotalReports(data.totalReports ?? 0);
+      setCycleLabel(data.cycleLabel ?? "");
+      setPeriodDateLabel(data.periodDateLabel ?? "");
       setReportDetails(data.reportDetails ?? []);
     }
     loadStats();
@@ -87,7 +89,7 @@ export default function DashboardPage() {
       helper:
         totalReports === null
           ? "Loading…"
-          : `of ${totalReports} available for ${CYCLE_LABEL}`,
+          : `of ${totalReports} available for ${periodDateLabel}`,
       helperColor: "text-emerald-600",
       icon: IconDocument,
       iconBg: "bg-indigo-100",
@@ -116,7 +118,7 @@ export default function DashboardPage() {
       helper:
         totalReports === null
           ? "Loading…"
-          : `of ${totalReports} submitted for ${CYCLE_LABEL}`,
+          : `of ${totalReports} submitted for ${periodDateLabel}`,
       helperColor: "text-emerald-600",
       icon: IconCheckCircle,
       iconBg: "bg-emerald-100",
@@ -149,7 +151,9 @@ export default function DashboardPage() {
               Welcome back{username ? `, ${username}` : ""} 👋
             </p>
             <p className="mt-1 text-sm text-zinc-600">
-              Here is the status of your CBUAE BRF reporting cycle for {CYCLE_LABEL}.
+              Here is the status of your CBUAE BRF reporting cycle for{" "}
+              {cycleLabel || "the current period"}
+              {periodDateLabel ? ` — reporting period ending ${periodDateLabel}.` : "."}
             </p>
           </div>
 
@@ -257,7 +261,7 @@ export default function DashboardPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-lg">
             <p className="text-sm font-semibold text-zinc-900">
-              Reports generated — {CYCLE_LABEL}
+              Reports generated — period ending {periodDateLabel}
             </p>
             <p className="mt-2 text-sm text-zinc-600">
               Status of each report for the current reporting cycle.

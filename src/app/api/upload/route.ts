@@ -91,6 +91,29 @@ export async function POST(request: Request) {
 
   const { rows, skipped } = parseResult.parsed;
 
+  // Any problem blocks the entire load: if a single record fails the file
+  // checks we do not insert anything, so the table always reflects the whole
+  // file or none of it. Enforced here rather than only in the UI.
+  if (skipped.length > 0) {
+    await logUpload({
+      targetTable: table.key,
+      fileName: originalFileName,
+      timeKey,
+      uploadedBy,
+      totalRows: rows.length + skipped.length,
+      insertedCount: 0,
+      failedCount: skipped.length,
+    });
+    return NextResponse.json({
+      targetTable: table.key,
+      totalRows: rows.length + skipped.length,
+      insertedCount: 0,
+      committed: false,
+      skipped,
+      errors: [],
+    });
+  }
+
   if (rows.length === 0) {
     await logUpload({
       targetTable: table.key,
