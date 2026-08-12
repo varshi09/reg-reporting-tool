@@ -14,8 +14,10 @@ type UploadResult = {
   targetTable: string;
   totalRows: number;
   insertedCount: number;
-  skipped: { row: number; reason: string }[];
-  errors: { row?: number; reason: string }[];
+  /** False when the batch was rolled back because a record failed to insert. */
+  committed: boolean;
+  skipped: { record: number; reason: string }[];
+  errors: { record?: number; reason: string }[];
 };
 
 type UploadPreview = {
@@ -23,7 +25,7 @@ type UploadPreview = {
   targetTable: string;
   targetLabel: string;
   rowCount: number;
-  skipped: { row: number; reason: string }[];
+  skipped: { record: number; reason: string }[];
   columnsMatched: number;
   columnsExpected: number;
   validations: ValidationIssue[];
@@ -225,7 +227,7 @@ export default function UploadPage() {
   return (
     <AppShell active="/upload" title="Upload data">
       <div className="flex flex-col gap-4">
-        <div className="max-w-2xl rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
+        <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
           <span className="flex h-9 w-9 items-center justify-center rounded-md bg-indigo-100 text-lg text-indigo-600">
             📤
           </span>
@@ -367,7 +369,7 @@ export default function UploadPage() {
         </div>
 
         {result && (
-          <div className="max-w-2xl rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
+          <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
             <span className="flex h-9 w-9 items-center justify-center rounded-md bg-emerald-100 text-lg text-emerald-600">
               ✅
             </span>
@@ -397,11 +399,11 @@ export default function UploadPage() {
             {(result.skipped.length > 0 || result.errors.length > 0) && (
               <ul className="mt-3 flex flex-col gap-1 text-sm text-red-600">
                 {result.skipped.map((s, i) => (
-                  <li key={`skip-${i}`}>Row {s.row}: {s.reason}</li>
+                  <li key={`skip-${i}`}>Record {s.record}: {s.reason}</li>
                 ))}
                 {result.errors.map((e, i) => (
                   <li key={`err-${i}`}>
-                    {e.row ? `Row ${e.row}: ` : ""}
+                    {e.record ? `Record ${e.record}: ` : ""}
                     {e.reason}
                   </li>
                 ))}
@@ -511,7 +513,7 @@ export default function UploadPage() {
                 <ul className="mt-1.5 max-h-32 overflow-y-auto text-xs text-zinc-700">
                   {preview.skipped.map((s, i) => (
                     <li key={`preview-skip-${i}`} className="py-0.5">
-                      <span className="font-medium">Row {s.row}:</span>{" "}
+                      <span className="font-medium">Record {s.record}:</span>{" "}
                       {s.reason}
                     </li>
                   ))}
@@ -536,7 +538,7 @@ export default function UploadPage() {
                           : "text-amber-600"
                       }
                     >
-                      {issue.row ? `Row ${issue.row}: ` : ""}
+                      {issue.record ? `Record ${issue.record}: ` : ""}
                       {issue.column ? `${issue.column} — ` : ""}
                       {issue.message}
                     </li>
@@ -571,27 +573,45 @@ export default function UploadPage() {
             {(() => {
               const problemCount = result.skipped.length + result.errors.length;
               const allLoaded = problemCount === 0;
+              // A rollback means nothing was written at all, which is a
+              // materially different outcome from "loaded, with some rows
+              // skipped" — the heading must not blur the two.
+              const rolledBack = !result.committed;
               return (
                 <>
                   <div className="flex items-center gap-2.5">
                     <span
                       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-lg ${
-                        allLoaded
-                          ? "bg-emerald-100 text-emerald-600"
-                          : "bg-amber-100 text-amber-600"
+                        rolledBack
+                          ? "bg-red-100 text-red-600"
+                          : allLoaded
+                            ? "bg-emerald-100 text-emerald-600"
+                            : "bg-amber-100 text-amber-600"
                       }`}
                     >
-                      {allLoaded ? "✅" : "⚠️"}
+                      {rolledBack ? "🚫" : allLoaded ? "✅" : "⚠️"}
                     </span>
                     <div>
                       <p className="text-sm font-semibold text-zinc-900">
-                        {allLoaded ? "Load complete" : "Loaded with issues"}
+                        {rolledBack
+                          ? "Nothing loaded — changes rolled back"
+                          : allLoaded
+                            ? "Load complete"
+                            : "Loaded with issues"}
                       </p>
                       <p className="text-xs text-zinc-500">
                         {result.targetTable}
                       </p>
                     </div>
                   </div>
+
+                  {rolledBack && (
+                    <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                      A record failed to insert, so the entire batch was rolled
+                      back. Nothing was written to {result.targetTable}. Fix the
+                      records below and upload the file again.
+                    </p>
+                  )}
 
                   <div className="mt-4 grid grid-cols-3 gap-3">
                     <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
@@ -626,7 +646,7 @@ export default function UploadPage() {
                       <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border border-amber-200 bg-amber-50/50 p-2 text-xs text-zinc-700">
                         {result.skipped.map((s, i) => (
                           <li key={`skip-${i}`} className="py-0.5">
-                            <span className="font-medium">Row {s.row}:</span>{" "}
+                            <span className="font-medium">Record {s.record}:</span>{" "}
                             {s.reason}
                           </li>
                         ))}
@@ -646,8 +666,8 @@ export default function UploadPage() {
                       <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border border-red-200 bg-red-50/50 p-2 text-xs text-zinc-700">
                         {result.errors.map((e, i) => (
                           <li key={`err-${i}`} className="py-0.5">
-                            {e.row !== undefined && (
-                              <span className="font-medium">Row {e.row}: </span>
+                            {e.record !== undefined && (
+                              <span className="font-medium">Record {e.record}: </span>
                             )}
                             {e.reason}
                           </li>

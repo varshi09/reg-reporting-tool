@@ -4,7 +4,11 @@ import { normalizeHeader, type UploadTableConfig } from "@/lib/uploadTables";
 
 export type UploadRow = Record<string, string>;
 
-export type SkippedRow = { row: number; reason: string };
+/**
+ * `record` is the data-record number, not the spreadsheet row: row 1 is the
+ * header, so file row 2 is record 1.
+ */
+export type SkippedRow = { record: number; reason: string };
 
 /**
  * A single problem found while validating parsed rows.
@@ -13,7 +17,8 @@ export type SkippedRow = { row: number; reason: string };
 export type ValidationIssue = {
   severity: "error" | "warning";
   message: string;
-  row?: number;
+  /** Data-record number (file row 2 is record 1), matching SkippedRow. */
+  record?: number;
   column?: string;
 };
 
@@ -90,6 +95,8 @@ export async function parseUploadFile(
   const skipped: SkippedRow[] = [];
 
   for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
+    // Row 1 is the header, so file row 2 is record 1.
+    const recordNumber = rowNumber - 1;
     const row = worksheet.getRow(rowNumber);
     const record: UploadRow = {};
     let hasAnyValue = false;
@@ -121,7 +128,7 @@ export async function parseUploadFile(
 
     if (missingColumns.length > 0) {
       skipped.push({
-        row: rowNumber,
+        record: recordNumber,
         reason: `Missing a value for ${missingColumns.join(", ")}.`,
       });
       continue;
@@ -129,7 +136,7 @@ export async function parseUploadFile(
 
     if (oversizedColumns.length > 0) {
       skipped.push({
-        row: rowNumber,
+        record: recordNumber,
         reason: `Value too long for ${oversizedColumns.join(", ")}.`,
       });
       continue;
