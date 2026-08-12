@@ -23,6 +23,7 @@ type UploadPreview = {
   targetTable: string;
   targetLabel: string;
   rowCount: number;
+  skipped: { row: number; reason: string }[];
   columnsMatched: number;
   columnsExpected: number;
   validations: ValidationIssue[];
@@ -63,6 +64,7 @@ export default function UploadPage() {
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<UploadPreview | null>(null);
   const [result, setResult] = useState<UploadResult | null>(null);
+  const [showResultModal, setShowResultModal] = useState(false);
   const [history, setHistory] = useState<LogEntry[]>([]);
 
   const loadHistory = useCallback(async () => {
@@ -207,6 +209,7 @@ export default function UploadPage() {
       }
 
       setResult(data);
+      setShowResultModal(true);
       resetFileSelection();
       loadHistory();
     } catch {
@@ -495,6 +498,27 @@ export default function UploadPage() {
               </div>
             </div>
 
+            {preview.skipped.length > 0 && (
+              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2">
+                <p className="text-xs font-semibold text-amber-700">
+                  {preview.skipped.length} row
+                  {preview.skipped.length === 1 ? "" : "s"} will be skipped
+                </p>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  These will not be loaded. Fix them in the file and re-upload
+                  if they are needed.
+                </p>
+                <ul className="mt-1.5 max-h-32 overflow-y-auto text-xs text-zinc-700">
+                  {preview.skipped.map((s, i) => (
+                    <li key={`preview-skip-${i}`} className="py-0.5">
+                      <span className="font-medium">Row {s.row}:</span>{" "}
+                      {s.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="mt-3 rounded-md border border-dashed border-zinc-300 px-3 py-2">
               <p className="text-xs font-medium text-zinc-700">Validations</p>
               {preview.validations.length === 0 ? (
@@ -537,6 +561,112 @@ export default function UploadPage() {
                 {isUploading ? "Loading..." : "Confirm & load"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showResultModal && result && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-lg">
+            {(() => {
+              const problemCount = result.skipped.length + result.errors.length;
+              const allLoaded = problemCount === 0;
+              return (
+                <>
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-lg ${
+                        allLoaded
+                          ? "bg-emerald-100 text-emerald-600"
+                          : "bg-amber-100 text-amber-600"
+                      }`}
+                    >
+                      {allLoaded ? "✅" : "⚠️"}
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-900">
+                        {allLoaded ? "Load complete" : "Loaded with issues"}
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        {result.targetTable}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-3 gap-3">
+                    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <p className="text-lg font-semibold text-emerald-700">
+                        {result.insertedCount}
+                      </p>
+                      <p className="text-xs text-emerald-700">Inserted</p>
+                    </div>
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+                      <p className="text-lg font-semibold text-amber-700">
+                        {result.skipped.length}
+                      </p>
+                      <p className="text-xs text-amber-700">Skipped</p>
+                    </div>
+                    <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
+                      <p className="text-lg font-semibold text-red-700">
+                        {result.errors.length}
+                      </p>
+                      <p className="text-xs text-red-700">Failed</p>
+                    </div>
+                  </div>
+
+                  {result.skipped.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                        Skipped before loading ({result.skipped.length})
+                      </p>
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        These rows were rejected by the file checks and never
+                        reached the database.
+                      </p>
+                      <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border border-amber-200 bg-amber-50/50 p-2 text-xs text-zinc-700">
+                        {result.skipped.map((s, i) => (
+                          <li key={`skip-${i}`} className="py-0.5">
+                            <span className="font-medium">Row {s.row}:</span>{" "}
+                            {s.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {result.errors.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
+                        Rejected by the database ({result.errors.length})
+                      </p>
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        These rows passed the file checks but the database
+                        refused them.
+                      </p>
+                      <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border border-red-200 bg-red-50/50 p-2 text-xs text-zinc-700">
+                        {result.errors.map((e, i) => (
+                          <li key={`err-${i}`} className="py-0.5">
+                            {e.row !== undefined && (
+                              <span className="font-medium">Row {e.row}: </span>
+                            )}
+                            {e.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="mt-5 flex justify-end">
+                    <button
+                      onClick={() => setShowResultModal(false)}
+                      className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
