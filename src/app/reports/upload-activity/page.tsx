@@ -12,6 +12,7 @@ type LogEntry = {
   TOTAL_ROWS: number;
   INSERTED_COUNT: number;
   FAILED_COUNT: number;
+  FAILURE_REASONS: string | null;
 };
 
 const TARGET_TABLE = "DIM_CUSTOMER";
@@ -169,7 +170,8 @@ export default function ReportsPage() {
                     <th className="pb-2 pr-4 font-medium">Uploaded at</th>
                     <th className="pb-2 pr-4 font-medium">Total</th>
                     <th className="pb-2 pr-4 font-medium">Inserted</th>
-                    <th className="pb-2 font-medium">Failed</th>
+                    <th className="pb-2 pr-4 font-medium">Failed</th>
+                    <th className="pb-2 font-medium">Failure reason</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -186,7 +188,19 @@ export default function ReportsPage() {
                       </td>
                       <td className="py-2 pr-4">{entry.TOTAL_ROWS}</td>
                       <td className="py-2 pr-4">{entry.INSERTED_COUNT}</td>
-                      <td className="py-2">{entry.FAILED_COUNT}</td>
+                      <td className="py-2 pr-4">{entry.FAILED_COUNT}</td>
+                      <td className="max-w-xs py-2">
+                        {entry.FAILURE_REASONS ? (
+                          <span
+                            className="block truncate text-red-600"
+                            title={entry.FAILURE_REASONS}
+                          >
+                            {entry.FAILURE_REASONS}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-300">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

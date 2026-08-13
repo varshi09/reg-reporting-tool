@@ -31,6 +31,22 @@ function describeOracleError(rawMessage: string | undefined): string {
   return plain === raw || !code ? plain : `${plain} (${code})`;
 }
 
+// UPLOAD_LOG.failure_reasons is VARCHAR2(4000 BYTE); stay well under that so
+// multi-byte characters in a reason can't push us over the limit.
+const FAILURE_REASONS_MAX_CHARS = 3900;
+
+function summarizeFailureReasons(
+  items: { record?: number; reason: string }[]
+): string | null {
+  if (items.length === 0) return null;
+  const joined = items
+    .map((item) => (item.record !== undefined ? `Record ${item.record}: ${item.reason}` : item.reason))
+    .join("; ");
+  return joined.length > FAILURE_REASONS_MAX_CHARS
+    ? `${joined.slice(0, FAILURE_REASONS_MAX_CHARS - 1)}…`
+    : joined;
+}
+
 async function logUpload(entry: {
   targetTable: string;
   fileName: string;
@@ -39,11 +55,12 @@ async function logUpload(entry: {
   totalRows: number;
   insertedCount: number;
   failedCount: number;
+  failureReasons: string | null;
 }) {
   await withConnection((connection) =>
     connection.execute(
-      `INSERT INTO UPLOAD_LOG (target_table, file_name, time_key, uploaded_by, total_rows, inserted_count, failed_count)
-       VALUES (:targetTable, :fileName, :timeKey, :uploadedBy, :totalRows, :insertedCount, :failedCount)`,
+      `INSERT INTO UPLOAD_LOG (target_table, file_name, time_key, uploaded_by, total_rows, inserted_count, failed_count, failure_reasons)
+       VALUES (:targetTable, :fileName, :timeKey, :uploadedBy, :totalRows, :insertedCount, :failedCount, :failureReasons)`,
       entry,
       { autoCommit: true }
     )
@@ -103,6 +120,7 @@ export async function POST(request: Request) {
       totalRows: rows.length + skipped.length,
       insertedCount: 0,
       failedCount: skipped.length,
+      failureReasons: summarizeFailureReasons(skipped),
     });
     return NextResponse.json({
       targetTable: table.key,
@@ -123,6 +141,7 @@ export async function POST(request: Request) {
       totalRows: 0,
       insertedCount: 0,
       failedCount: skipped.length,
+      failureReasons: summarizeFailureReasons(skipped),
     });
     return NextResponse.json(
       { error: "No valid data rows found in the file.", skipped },
@@ -177,6 +196,7 @@ export async function POST(request: Request) {
     totalRows: rows.length,
     insertedCount,
     failedCount: skipped.length + rowErrors.length,
+    failureReasons: summarizeFailureReasons([...skipped, ...rowErrors]),
   });
 
   return NextResponse.json({
