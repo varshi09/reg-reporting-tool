@@ -46,8 +46,11 @@ export default function LoginPage() {
 
     setIsSubmitting(true);
 
+    // Usernames match regardless of case; passwords stay case-sensitive.
     const match = PLACEHOLDER_USERS.find(
-      (u) => u.username === username && u.password === password
+      (u) =>
+        u.username.toLowerCase() === username.toLowerCase() &&
+        u.password === password
     );
     if (match) {
       sessionStorage.setItem("rrt_logged_in", "true");
