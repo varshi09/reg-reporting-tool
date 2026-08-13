@@ -4,7 +4,11 @@ import { normalizeHeader, type UploadTableConfig } from "@/lib/uploadTables";
 
 export type UploadRow = Record<string, string>;
 
-export type SkippedRow = { row: number; reason: string };
+/**
+ * `record` is the data-record number, not the spreadsheet row: row 1 is the
+ * header, so file row 2 is record 1.
+ */
+export type SkippedRow = { record: number; reason: string };
 
 /**
  * A single problem found while validating parsed rows.
@@ -13,7 +17,8 @@ export type SkippedRow = { row: number; reason: string };
 export type ValidationIssue = {
   severity: "error" | "warning";
   message: string;
-  row?: number;
+  /** Data-record number (file row 2 is record 1), matching SkippedRow. */
+  record?: number;
   column?: string;
 };
 
@@ -90,23 +95,50 @@ export async function parseUploadFile(
   const skipped: SkippedRow[] = [];
 
   for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
+    // Row 1 is the header, so file row 2 is record 1.
+    const recordNumber = rowNumber - 1;
     const row = worksheet.getRow(rowNumber);
     const record: UploadRow = {};
     let hasAnyValue = false;
-    let missingRequired = false;
+    // Named so the user is told exactly which column caused the problem,
+    // rather than a generic "missing field" message.
+    const missingColumns: string[] = [];
+    const oversizedColumns: string[] = [];
 
     for (const col of table.columns) {
       const colIndex = columnIndexes.get(col.column)!;
       const value = String(row.getCell(colIndex).value ?? "").trim();
-      if (value) hasAnyValue = true;
-      else missingRequired = true;
+      if (value) {
+        hasAnyValue = true;
+        // Caught here rather than letting Oracle reject the row later with a
+        // cryptic ORA- error the user can't act on.
+        if (value.length > col.maxSize) {
+          oversizedColumns.push(
+            `${col.column} (${value.length} chars, max ${col.maxSize})`
+          );
+        }
+      } else {
+        missingColumns.push(col.column);
+      }
       record[col.column] = value;
     }
 
+    // Entirely blank row — not an error, just skip it silently.
     if (!hasAnyValue) continue;
 
-    if (missingRequired) {
-      skipped.push({ row: rowNumber, reason: "Missing required field." });
+    if (missingColumns.length > 0) {
+      skipped.push({
+        record: recordNumber,
+        reason: `Missing a value for ${missingColumns.join(", ")}.`,
+      });
+      continue;
+    }
+
+    if (oversizedColumns.length > 0) {
+      skipped.push({
+        record: recordNumber,
+        reason: `Value too long for ${oversizedColumns.join(", ")}.`,
+      });
       continue;
     }
 
