@@ -58,7 +58,10 @@ export default function UploadPage() {
   const { username } = useRequireAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [targetTable, setTargetTable] = useState(UPLOAD_TABLES[0]?.key ?? "");
+  // No default selection — the reporting officer must actively choose which
+  // dataset a file belongs to rather than silently uploading into whichever
+  // table happens to be first in the list.
+  const [targetTable, setTargetTable] = useState("");
   const [timeKey, setTimeKey] = useState("");
   const [isDragActive, setIsDragActive] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
@@ -154,7 +157,7 @@ export default function UploadPage() {
       return;
     }
     if (!targetTable) {
-      setError("Choose a data type first.");
+      setError("Select the file to upload first.");
       return;
     }
     if (!timeKey) {
@@ -250,10 +253,11 @@ export default function UploadPage() {
               htmlFor="targetTable"
               className="text-sm font-medium text-zinc-700"
             >
-              Data type
+              Select the file to upload
             </label>
             <select
               id="targetTable"
+              required
               value={targetTable}
               onChange={(e) => {
                 setTargetTable(e.target.value);
@@ -262,6 +266,9 @@ export default function UploadPage() {
               }}
               className="w-fit rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
             >
+              <option value="" disabled>
+                Select...
+              </option>
               {UPLOAD_TABLES.map((t) => (
                 <option key={t.key} value={t.key}>
                   {t.label}
@@ -361,7 +368,7 @@ export default function UploadPage() {
 
           <button
             onClick={handleValidateClick}
-            disabled={isPreviewing || isUploading || !file || !timeKey}
+            disabled={isPreviewing || isUploading || !file || !timeKey || !targetTable}
             className="mt-4 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
           >
             {isPreviewing ? "Validating..." : "Validate & upload"}
