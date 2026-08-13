@@ -15,7 +15,7 @@ type LogEntry = {
   FAILURE_REASONS: string | null;
 };
 
-const TARGET_TABLE = "DIM_CUSTOMER";
+const TARGET_TABLE = "REF_BRF_CONS_MAPPING_TABLE";
 
 export default function ReportsPage() {
   const [userOptions, setUserOptions] = useState<string[]>([]);
@@ -79,7 +79,7 @@ export default function ReportsPage() {
         </a>
         <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
           <p className="text-sm font-semibold text-zinc-900">
-            Customer upload report
+            BS Consolidated Mapping Data upload report
           </p>
 
           <div className="mt-4 flex flex-wrap items-end gap-4">
