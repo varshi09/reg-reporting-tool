@@ -84,6 +84,26 @@ export const UPLOAD_TABLES: UploadTableConfig[] = [
       { column: "gl_leve4_code_excl", maxSize: 1000 },
     ],
   },
+  {
+    key: "REF_BRF_INTERNAL_LINE_MAP",
+    label: "Internal Line Map",
+    columns: [
+      { column: "glsl", maxSize: 500 },
+      { column: "from_glsl", maxSize: 500 },
+      { column: "to_glsl", maxSize: 500 },
+      { column: "excl_glsl", maxSize: 500 },
+      { column: "gl_desc", maxSize: 1000 },
+      { column: "cif_type", maxSize: 4000 },
+      { column: "prod_sub_type", maxSize: 4000 },
+      { column: "prod_sub_type_desc", maxSize: 4000 },
+      { column: "ref_no", maxSize: 500 },
+      { column: "ref_desc", maxSize: 1000 },
+      { column: "sector_code", maxSize: 4000 },
+      { column: "category_code", maxSize: 4000 },
+      { column: "cons_product", maxSize: 4000 },
+      { column: "cons_sector", maxSize: 4000 },
+    ],
+  },
 ];
 
 // Resolves a caller-supplied table key against the static config above.
