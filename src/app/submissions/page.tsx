@@ -39,6 +39,13 @@ function uniqueSorted(values: (string | null)[]): string[] {
   return Array.from(new Set(values.filter((v): v is string => Boolean(v)))).sort();
 }
 
+// Fixed, calendar-order list so every month is selectable even before any
+// data exists for it — matches the API's timeKeyToMonthYear() naming.
+const ALL_MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
 function nowForDatetimeLocal(): string {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -118,7 +125,7 @@ export default function SubmissionsPage() {
     () => ({
       versions: uniqueSorted(periods.map((p) => p.version)),
       frequencies: uniqueSorted(periods.map((p) => p.frequency)),
-      months: uniqueSorted(periods.map((p) => p.month)),
+      months: ALL_MONTHS,
       years: uniqueSorted(periods.map((p) => p.year)),
       submitters: uniqueSorted(periods.map((p) => p.submittedBy)),
     }),
