@@ -36,19 +36,22 @@ async function hasSubmissionForPeriod(
 }
 
 export async function GET() {
-  const filesUploaded = await withConnection(async (connection) => {
-    const result = await connection.execute<{ COUNT: number }>(
-      `SELECT COUNT(*) AS "COUNT" FROM UPLOAD_LOG`
-    );
-    return result.rows?.[0]?.COUNT ?? 0;
-  });
-
   const reports = getSubmittableReports();
 
   // A cycle run this month reports last month-end's data — see
   // src/lib/reportingPeriod.ts.
   const period = getReportingPeriod();
   const yearMonthPrefix = period.monthPrefix;
+
+  // Scoped to the data's reporting date (time_key), same as the upload
+  // history filters, not to when the file happened to be uploaded.
+  const filesUploaded = await withConnection(async (connection) => {
+    const result = await connection.execute<{ COUNT: number }>(
+      `SELECT COUNT(*) AS "COUNT" FROM UPLOAD_LOG WHERE time_key LIKE :prefix`,
+      { prefix: `${yearMonthPrefix}%` }
+    );
+    return result.rows?.[0]?.COUNT ?? 0;
+  });
 
   let reportsGenerated = 0;
   let submittedToCbuae = 0;
