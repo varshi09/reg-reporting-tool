@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parseResult.error }, { status: 400 });
   }
 
-  const { rows, skipped, columnsMatched, columnsExpected } = parseResult.parsed;
+  const { rows, skipped } = parseResult.parsed;
 
   return NextResponse.json({
     fileName: file.name,
@@ -47,8 +47,6 @@ export async function POST(request: Request) {
     // Surfaced so the user sees which rows will be dropped before they
     // commit the load, not only afterwards in the result.
     skipped,
-    columnsMatched,
-    columnsExpected,
     validations: runUploadValidations(rows, table),
   });
 }

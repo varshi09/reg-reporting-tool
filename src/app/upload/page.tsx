@@ -27,8 +27,6 @@ type UploadPreview = {
   targetLabel: string;
   rowCount: number;
   skipped: { record: number; reason: string }[];
-  columnsMatched: number;
-  columnsExpected: number;
   validations: ValidationIssue[];
 };
 
@@ -509,19 +507,11 @@ export default function UploadPage() {
               </p>
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2">
-                <p className="text-lg font-semibold text-indigo-700">
-                  {preview.rowCount}
-                </p>
-                <p className="text-xs text-indigo-700">Rows found</p>
-              </div>
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
-                <p className="text-lg font-semibold text-emerald-700">
-                  {preview.columnsMatched} / {preview.columnsExpected}
-                </p>
-                <p className="text-xs text-emerald-700">Columns matched</p>
-              </div>
+            <div className="mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2">
+              <p className="text-lg font-semibold text-indigo-700">
+                {preview.rowCount}
+              </p>
+              <p className="text-xs text-indigo-700">Rows found</p>
             </div>
 
             {preview.skipped.length > 0 && (
