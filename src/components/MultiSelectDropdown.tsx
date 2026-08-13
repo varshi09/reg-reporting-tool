@@ -50,7 +50,7 @@ export default function MultiSelectDropdown({
         </button>
 
         {isOpen && (
-          <div className="absolute z-10 mt-1 w-full min-w-[160px] rounded-md border border-zinc-300 bg-white py-1 shadow-md">
+          <div className="absolute z-20 mt-1 w-full min-w-[160px] rounded-md border border-zinc-300 bg-white py-1 shadow-md">
             {options.map((option) => (
               <label
                 key={option}
