@@ -53,7 +53,6 @@ export default function DashboardPage() {
   // Period labels come from the API so the dashboard and the backend can
   // never disagree about which reporting period is current.
   const [cycleLabel, setCycleLabel] = useState("");
-  const [periodLabel, setPeriodLabel] = useState("");
   const [reportDetails, setReportDetails] = useState<ReportDetail[]>([]);
   const [showReportsModal, setShowReportsModal] = useState(false);
 
@@ -66,7 +65,6 @@ export default function DashboardPage() {
       setSubmittedToCbuae(data.submittedToCbuae ?? 0);
       setTotalReports(data.totalReports ?? 0);
       setCycleLabel(data.cycleLabel ?? "");
-      setPeriodLabel(data.periodLabel ?? "");
       setReportDetails(data.reportDetails ?? []);
     }
     loadStats();
@@ -89,7 +87,7 @@ export default function DashboardPage() {
       helper:
         totalReports === null
           ? "Loading…"
-          : `of ${totalReports} available for ${periodLabel}`,
+          : `of ${totalReports} available`,
       helperColor: "text-emerald-600",
       icon: IconDocument,
       iconBg: "bg-indigo-100",
@@ -118,7 +116,7 @@ export default function DashboardPage() {
       helper:
         totalReports === null
           ? "Loading…"
-          : `of ${totalReports} submitted for ${periodLabel}`,
+          : `of ${totalReports} submitted`,
       helperColor: "text-emerald-600",
       icon: IconCheckCircle,
       iconBg: "bg-emerald-100",
@@ -153,7 +151,7 @@ export default function DashboardPage() {
             <p className="mt-1 text-sm text-zinc-600">
               Here is the status of your CBUAE BRF reporting cycle for{" "}
               {cycleLabel || "the current period"}
-              {periodLabel ? ` — reporting period ${periodLabel}.` : "."}
+              .
             </p>
           </div>
 
@@ -261,7 +259,7 @@ export default function DashboardPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-lg">
             <p className="text-sm font-semibold text-zinc-900">
-              Reports generated — {periodLabel}
+              Reports generated
             </p>
             <p className="mt-2 text-sm text-zinc-600">
               Status of each report for the current reporting cycle.

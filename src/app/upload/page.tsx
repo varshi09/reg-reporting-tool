@@ -427,8 +427,7 @@ export default function UploadPage() {
             Upload history
           </p>
           <p className="mt-0.5 text-xs text-zinc-500">
-            Showing uploads for the current reporting period —{" "}
-            {period.periodLabel}.
+            Showing uploads for the current reporting period.
           </p>
           {history.length === 0 ? (
             <p className="mt-2 text-sm text-zinc-500">
