@@ -13,8 +13,12 @@ import {
 } from "@/components/icons";
 
 // Temporary placeholder credentials until real authentication is built.
-const DEFAULT_USERNAME = "admin";
-const DEFAULT_PASSWORD = "Admin@123";
+// Roles aren't wired up yet — every account behaves identically for now.
+const PLACEHOLDER_USERS = [
+  { username: "admin", password: "Admin@123" },
+  { username: "Varshit", password: "Varshit@123" },
+  { username: "Tharak", password: "Tharak@123" },
+];
 
 const CHECKLIST = [
   { icon: IconDocument, line1: "Automated BRF report generation", line2: "across entities" },
@@ -42,9 +46,12 @@ export default function LoginPage() {
 
     setIsSubmitting(true);
 
-    if (username === DEFAULT_USERNAME && password === DEFAULT_PASSWORD) {
+    const match = PLACEHOLDER_USERS.find(
+      (u) => u.username === username && u.password === password
+    );
+    if (match) {
       sessionStorage.setItem("rrt_logged_in", "true");
-      sessionStorage.setItem("rrt_username", username);
+      sessionStorage.setItem("rrt_username", match.username);
       router.push("/dashboard");
       return;
     }
@@ -254,8 +261,8 @@ export default function LoginPage() {
               </div>
 
               <p className="mt-6 text-center text-xs text-zinc-500">
-                Default credentials: admin / Admin@123 (placeholder — real
-                authentication coming later)
+                Placeholder accounts — real authentication coming later:
+                admin / Admin@123, Varshit / Varshit@123, Tharak / Tharak@123
               </p>
             </div>
           </div>
