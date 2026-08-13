@@ -6,6 +6,7 @@ import AppShell from "@/components/AppShell";
 import { IconFolder } from "@/components/icons";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { UPLOAD_TABLES } from "@/lib/uploadTables";
+import { getReportingPeriod } from "@/lib/reportingPeriod";
 import type { ValidationIssue } from "@/lib/uploadParser";
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -14,8 +15,10 @@ type UploadResult = {
   targetTable: string;
   totalRows: number;
   insertedCount: number;
-  skipped: { row: number; reason: string }[];
-  errors: { row?: number; reason: string }[];
+  /** False when the batch was rolled back because a record failed to insert. */
+  committed: boolean;
+  skipped: { record: number; reason: string }[];
+  errors: { record?: number; reason: string }[];
 };
 
 type UploadPreview = {
@@ -23,6 +26,7 @@ type UploadPreview = {
   targetTable: string;
   targetLabel: string;
   rowCount: number;
+  skipped: { record: number; reason: string }[];
   columnsMatched: number;
   columnsExpected: number;
   validations: ValidationIssue[];
@@ -38,6 +42,7 @@ type LogEntry = {
   TOTAL_ROWS: number;
   INSERTED_COUNT: number;
   FAILED_COUNT: number;
+  FAILURE_REASONS: string | null;
 };
 
 function formatBytes(bytes: number): string {
@@ -63,14 +68,21 @@ export default function UploadPage() {
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<UploadPreview | null>(null);
   const [result, setResult] = useState<UploadResult | null>(null);
+  const [showResultModal, setShowResultModal] = useState(false);
   const [history, setHistory] = useState<LogEntry[]>([]);
 
+  // History is scoped to the data of the current reporting period (the
+  // previous month-end), matched on time_key rather than upload timestamp.
+  const period = getReportingPeriod();
+
   const loadHistory = useCallback(async () => {
-    const response = await fetch("/api/upload-log");
+    const response = await fetch(
+      `/api/upload-log?timeKeyPrefix=${period.monthPrefix}`
+    );
     if (!response.ok) return;
     const data = await response.json();
     setHistory(data.entries ?? []);
-  }, []);
+  }, [period.monthPrefix]);
 
   useEffect(() => {
     loadHistory();
@@ -207,6 +219,7 @@ export default function UploadPage() {
       }
 
       setResult(data);
+      setShowResultModal(true);
       resetFileSelection();
       loadHistory();
     } catch {
@@ -222,7 +235,7 @@ export default function UploadPage() {
   return (
     <AppShell active="/upload" title="Upload data">
       <div className="flex flex-col gap-4">
-        <div className="max-w-2xl rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
+        <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
           <span className="flex h-9 w-9 items-center justify-center rounded-md bg-indigo-100 text-lg text-indigo-600">
             📤
           </span>
@@ -364,7 +377,7 @@ export default function UploadPage() {
         </div>
 
         {result && (
-          <div className="max-w-2xl rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
+          <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
             <span className="flex h-9 w-9 items-center justify-center rounded-md bg-emerald-100 text-lg text-emerald-600">
               ✅
             </span>
@@ -394,11 +407,11 @@ export default function UploadPage() {
             {(result.skipped.length > 0 || result.errors.length > 0) && (
               <ul className="mt-3 flex flex-col gap-1 text-sm text-red-600">
                 {result.skipped.map((s, i) => (
-                  <li key={`skip-${i}`}>Row {s.row}: {s.reason}</li>
+                  <li key={`skip-${i}`}>Record {s.record}: {s.reason}</li>
                 ))}
                 {result.errors.map((e, i) => (
                   <li key={`err-${i}`}>
-                    {e.row ? `Row ${e.row}: ` : ""}
+                    {e.record ? `Record ${e.record}: ` : ""}
                     {e.reason}
                   </li>
                 ))}
@@ -413,6 +426,9 @@ export default function UploadPage() {
           </span>
           <p className="mt-3 text-sm font-semibold text-zinc-900">
             Upload history
+          </p>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            Showing uploads for the current reporting period.
           </p>
           {history.length === 0 ? (
             <p className="mt-2 text-sm text-zinc-500">
@@ -430,7 +446,8 @@ export default function UploadPage() {
                     <th className="pb-2 pr-4 font-medium">Uploaded at</th>
                     <th className="pb-2 pr-4 font-medium">Total</th>
                     <th className="pb-2 pr-4 font-medium">Inserted</th>
-                    <th className="pb-2 font-medium">Failed</th>
+                    <th className="pb-2 pr-4 font-medium">Failed</th>
+                    <th className="pb-2 font-medium">Failure reason</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -448,7 +465,19 @@ export default function UploadPage() {
                       </td>
                       <td className="py-2 pr-4">{entry.TOTAL_ROWS}</td>
                       <td className="py-2 pr-4">{entry.INSERTED_COUNT}</td>
-                      <td className="py-2">{entry.FAILED_COUNT}</td>
+                      <td className="py-2 pr-4">{entry.FAILED_COUNT}</td>
+                      <td className="max-w-xs py-2">
+                        {entry.FAILURE_REASONS ? (
+                          <span
+                            className="block truncate text-red-600"
+                            title={entry.FAILURE_REASONS}
+                          >
+                            {entry.FAILURE_REASONS}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-300">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -495,6 +524,29 @@ export default function UploadPage() {
               </div>
             </div>
 
+            {preview.skipped.length > 0 && (
+              <div className="mt-3 rounded-md border border-red-200 bg-red-50/60 px-3 py-2">
+                <p className="text-xs font-semibold text-red-700">
+                  {preview.skipped.length} record
+                  {preview.skipped.length === 1 ? "" : "s"} must be fixed before
+                  this file can be loaded
+                </p>
+                <p className="mt-0.5 text-xs text-zinc-600">
+                  The load is all-or-nothing, so nothing will be written while
+                  any record has a problem. Correct these in the file and upload
+                  it again.
+                </p>
+                <ul className="mt-1.5 max-h-32 overflow-y-auto text-xs text-zinc-700">
+                  {preview.skipped.map((s, i) => (
+                    <li key={`preview-skip-${i}`} className="py-0.5">
+                      <span className="font-medium">Record {s.record}:</span>{" "}
+                      {s.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="mt-3 rounded-md border border-dashed border-zinc-300 px-3 py-2">
               <p className="text-xs font-medium text-zinc-700">Validations</p>
               {preview.validations.length === 0 ? (
@@ -512,7 +564,7 @@ export default function UploadPage() {
                           : "text-amber-600"
                       }
                     >
-                      {issue.row ? `Row ${issue.row}: ` : ""}
+                      {issue.record ? `Record ${issue.record}: ` : ""}
                       {issue.column ? `${issue.column} — ` : ""}
                       {issue.message}
                     </li>
@@ -531,12 +583,141 @@ export default function UploadPage() {
               </button>
               <button
                 onClick={handleConfirmUpload}
-                disabled={isUploading}
+                disabled={isUploading || preview.skipped.length > 0}
+                title={
+                  preview.skipped.length > 0
+                    ? "Fix the listed records first — the load is all-or-nothing."
+                    : undefined
+                }
                 className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
               >
                 {isUploading ? "Loading..." : "Confirm & load"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showResultModal && result && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-lg">
+            {(() => {
+              const problemCount = result.skipped.length + result.errors.length;
+              const allLoaded = problemCount === 0;
+              // A rollback means nothing was written at all, which is a
+              // materially different outcome from "loaded, with some rows
+              // skipped" — the heading must not blur the two.
+              const rolledBack = !result.committed;
+              return (
+                <>
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-lg ${
+                        rolledBack
+                          ? "bg-red-100 text-red-600"
+                          : allLoaded
+                            ? "bg-emerald-100 text-emerald-600"
+                            : "bg-amber-100 text-amber-600"
+                      }`}
+                    >
+                      {rolledBack ? "🚫" : allLoaded ? "✅" : "⚠️"}
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-900">
+                        {rolledBack
+                          ? "Nothing loaded — changes rolled back"
+                          : allLoaded
+                            ? "Load complete"
+                            : "Loaded with issues"}
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        {result.targetTable}
+                      </p>
+                    </div>
+                  </div>
+
+                  {rolledBack && (
+                    <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                      A record failed to insert, so the entire batch was rolled
+                      back. Nothing was written to {result.targetTable}. Fix the
+                      records below and upload the file again.
+                    </p>
+                  )}
+
+                  <div className="mt-4 grid grid-cols-3 gap-3">
+                    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <p className="text-lg font-semibold text-emerald-700">
+                        {result.insertedCount}
+                      </p>
+                      <p className="text-xs text-emerald-700">Inserted</p>
+                    </div>
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+                      <p className="text-lg font-semibold text-amber-700">
+                        {result.skipped.length}
+                      </p>
+                      <p className="text-xs text-amber-700">Skipped</p>
+                    </div>
+                    <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
+                      <p className="text-lg font-semibold text-red-700">
+                        {result.errors.length}
+                      </p>
+                      <p className="text-xs text-red-700">Failed</p>
+                    </div>
+                  </div>
+
+                  {result.skipped.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                        Skipped before loading ({result.skipped.length})
+                      </p>
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        These rows were rejected by the file checks and never
+                        reached the database.
+                      </p>
+                      <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border border-amber-200 bg-amber-50/50 p-2 text-xs text-zinc-700">
+                        {result.skipped.map((s, i) => (
+                          <li key={`skip-${i}`} className="py-0.5">
+                            <span className="font-medium">Record {s.record}:</span>{" "}
+                            {s.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {result.errors.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
+                        Rejected by the database ({result.errors.length})
+                      </p>
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        These rows passed the file checks but the database
+                        refused them.
+                      </p>
+                      <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border border-red-200 bg-red-50/50 p-2 text-xs text-zinc-700">
+                        {result.errors.map((e, i) => (
+                          <li key={`err-${i}`} className="py-0.5">
+                            {e.record !== undefined && (
+                              <span className="font-medium">Record {e.record}: </span>
+                            )}
+                            {e.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="mt-5 flex justify-end">
+                    <button
+                      onClick={() => setShowResultModal(false)}
+                      className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}

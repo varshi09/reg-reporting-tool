@@ -12,12 +12,12 @@ type LogEntry = {
   TOTAL_ROWS: number;
   INSERTED_COUNT: number;
   FAILED_COUNT: number;
+  FAILURE_REASONS: string | null;
 };
 
 const TARGET_TABLE = "DIM_CUSTOMER";
 
 export default function ReportsPage() {
-  const [timeKeyOptions, setTimeKeyOptions] = useState<string[]>([]);
   const [userOptions, setUserOptions] = useState<string[]>([]);
   const [timeKey, setTimeKey] = useState("");
   const [uploadedBy, setUploadedBy] = useState("");
@@ -31,7 +31,6 @@ export default function ReportsPage() {
       );
       if (!response.ok) return;
       const data = await response.json();
-      setTimeKeyOptions(data.timeKeys ?? []);
       setUserOptions(data.users ?? []);
     }
     loadFilters();
@@ -40,7 +39,7 @@ export default function ReportsPage() {
   const loadEntries = useCallback(async () => {
     setIsLoading(true);
     const params = new URLSearchParams({ targetTable: TARGET_TABLE, limit: "100" });
-    if (timeKey) params.set("timeKey", timeKey);
+    if (timeKey) params.set("timeKey", timeKey.replace(/-/g, ""));
     if (uploadedBy) params.set("uploadedBy", uploadedBy);
 
     const response = await fetch(`/api/upload-log?${params.toString()}`);
@@ -91,19 +90,13 @@ export default function ReportsPage() {
               >
                 Time key
               </label>
-              <select
+              <input
                 id="timeKeyFilter"
+                type="date"
                 value={timeKey}
                 onChange={(e) => setTimeKey(e.target.value)}
                 className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
-              >
-                <option value="">All</option>
-                {timeKeyOptions.map((tk) => (
-                  <option key={tk} value={tk}>
-                    {formatTimeKey(tk)}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -169,7 +162,8 @@ export default function ReportsPage() {
                     <th className="pb-2 pr-4 font-medium">Uploaded at</th>
                     <th className="pb-2 pr-4 font-medium">Total</th>
                     <th className="pb-2 pr-4 font-medium">Inserted</th>
-                    <th className="pb-2 font-medium">Failed</th>
+                    <th className="pb-2 pr-4 font-medium">Failed</th>
+                    <th className="pb-2 font-medium">Failure reason</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -186,7 +180,19 @@ export default function ReportsPage() {
                       </td>
                       <td className="py-2 pr-4">{entry.TOTAL_ROWS}</td>
                       <td className="py-2 pr-4">{entry.INSERTED_COUNT}</td>
-                      <td className="py-2">{entry.FAILED_COUNT}</td>
+                      <td className="py-2 pr-4">{entry.FAILED_COUNT}</td>
+                      <td className="max-w-xs py-2">
+                        {entry.FAILURE_REASONS ? (
+                          <span
+                            className="block truncate text-red-600"
+                            title={entry.FAILURE_REASONS}
+                          >
+                            {entry.FAILURE_REASONS}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-300">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
