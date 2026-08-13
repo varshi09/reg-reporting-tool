@@ -145,7 +145,7 @@ export default function DashboardPage() {
       label: "Files uploaded",
       value: filesUploaded === null ? "…" : String(filesUploaded),
       valueColor: "text-violet-600",
-      helper: "All time",
+      helper: "This reporting period",
       helperColor: "text-zinc-400",
       icon: IconCloudUpload,
       iconBg: "bg-violet-100",
