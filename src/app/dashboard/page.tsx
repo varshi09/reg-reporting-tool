@@ -13,6 +13,7 @@ import {
   IconFolder,
   IconArrowRight,
   IconShieldCheck,
+  IconCloudUpload,
 } from "@/components/icons";
 
 const QUICK_ACTIONS = [
@@ -50,6 +51,7 @@ export default function DashboardPage() {
   const [reportsGenerated, setReportsGenerated] = useState<number | null>(null);
   const [submittedToCbuae, setSubmittedToCbuae] = useState<number | null>(null);
   const [totalReports, setTotalReports] = useState<number | null>(null);
+  const [filesUploaded, setFilesUploaded] = useState<number | null>(null);
   // Period labels come from the API so the dashboard and the backend can
   // never disagree about which reporting period is current.
   const [cycleLabel, setCycleLabel] = useState("");
@@ -64,6 +66,7 @@ export default function DashboardPage() {
       setReportsGenerated(data.reportsGenerated ?? 0);
       setSubmittedToCbuae(data.submittedToCbuae ?? 0);
       setTotalReports(data.totalReports ?? 0);
+      setFilesUploaded(data.filesUploaded ?? 0);
       setCycleLabel(data.cycleLabel ?? "");
       setReportDetails(data.reportDetails ?? []);
     }
@@ -138,6 +141,19 @@ export default function DashboardPage() {
       progressColor: "bg-sky-500",
       onClick: undefined,
     },
+    {
+      label: "Files uploaded",
+      value: filesUploaded === null ? "…" : String(filesUploaded),
+      valueColor: "text-violet-600",
+      helper: "All time",
+      helperColor: "text-zinc-400",
+      icon: IconCloudUpload,
+      iconBg: "bg-violet-100",
+      iconColor: "text-violet-600",
+      progressPct: null,
+      progressColor: "bg-violet-500",
+      onClick: undefined,
+    },
   ];
 
   return (
@@ -174,7 +190,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
           {stats.map((stat) => {
             const Icon = stat.icon;
             return (
