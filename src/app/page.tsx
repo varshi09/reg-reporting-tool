@@ -7,8 +7,9 @@ export default function RootPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const isLoggedIn = sessionStorage.getItem("rrt_logged_in") === "true";
-    router.replace(isLoggedIn ? "/dashboard" : "/login");
+    // Proxy already redirects unauthenticated requests to /login before
+    // this page can render, so reaching here means there's a valid session.
+    router.replace("/dashboard");
   }, [router]);
 
   return null;
