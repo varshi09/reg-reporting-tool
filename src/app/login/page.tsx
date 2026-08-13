@@ -12,14 +12,6 @@ import {
   IconArrowRight,
 } from "@/components/icons";
 
-// Temporary placeholder credentials until real authentication is built.
-// Roles aren't wired up yet — every account behaves identically for now.
-const PLACEHOLDER_USERS = [
-  { username: "admin", password: "Admin@123" },
-  { username: "Varshit", password: "Varshit@123" },
-  { username: "Tharak", password: "Tharak@123" },
-];
-
 const CHECKLIST = [
   { icon: IconDocument, line1: "Automated BRF report generation", line2: "across entities" },
   { icon: IconShieldCheck, line1: "Built-in validation &", line2: "reconciliation checks" },
@@ -35,7 +27,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
 
@@ -46,18 +38,25 @@ export default function LoginPage() {
 
     setIsSubmitting(true);
 
-    const match = PLACEHOLDER_USERS.find(
-      (u) => u.username === username && u.password === password
-    );
-    if (match) {
-      sessionStorage.setItem("rrt_logged_in", "true");
-      sessionStorage.setItem("rrt_username", match.username);
-      router.push("/dashboard");
-      return;
-    }
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
 
-    setError("Invalid username or password.");
-    setIsSubmitting(false);
+      if (response.ok) {
+        router.push("/dashboard");
+        return;
+      }
+
+      const data = await response.json().catch(() => ({}));
+      setError(data.error ?? "Invalid username or password.");
+    } catch {
+      setError("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -260,10 +259,6 @@ export default function LoginPage() {
                 </span>
               </div>
 
-              <p className="mt-6 text-center text-xs text-zinc-500">
-                Placeholder accounts — real authentication coming later:
-                admin / Admin@123, Varshit / Varshit@123, Tharak / Tharak@123
-              </p>
             </div>
           </div>
 
