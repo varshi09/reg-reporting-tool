@@ -34,6 +34,23 @@ export type ParseUploadFileResult =
   | { ok: false; error: string };
 
 /**
+ * Both xlsx date cells and ExcelJS's csv reader (which auto-detects
+ * date-like text) surface as JS Date objects. Plain String(date) produces a
+ * verbose form like "Fri Jul 31 2026 00:00:00 GMT+0400 (...)", which blows
+ * past any reasonable column size and isn't a format Oracle recognizes
+ * either — format explicitly instead.
+ */
+function cellValueToString(value: unknown): string {
+  if (value instanceof Date) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return String(value ?? "");
+}
+
+/**
  * Reads an uploaded .xlsx/.csv file into rows for `table`.
  *
  * Both POST /api/upload/preview and POST /api/upload go through this function
@@ -103,7 +120,7 @@ export async function parseUploadFile(
 
     for (const col of table.columns) {
       const colIndex = columnIndexes.get(col.column)!;
-      const value = String(row.getCell(colIndex).value ?? "").trim();
+      const value = cellValueToString(row.getCell(colIndex).value).trim();
       if (value) {
         hasAnyValue = true;
         // Caught here rather than letting Oracle reject the row later with a
