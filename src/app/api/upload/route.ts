@@ -155,8 +155,18 @@ export async function POST(request: Request) {
   }
 
   const insertColumns = table.columns.map((c) => c.column);
+  // Date columns are bound as plain strings like every other column (see
+  // bindDefs above), so they need an explicit TO_DATE — otherwise Oracle
+  // falls back to the session's NLS_DATE_FORMAT (DD-MON-RR by default),
+  // which rejects the YYYY-MM-DD format the parser produces.
   const insertSql = `INSERT INTO ${table.key} (${insertColumns.join(", ")})
-     VALUES (${insertColumns.map((c) => `:${c}`).join(", ")})`;
+     VALUES (${insertColumns
+       .map((c) =>
+         table.columns.find((col) => col.column === c)?.type === "date"
+           ? `TO_DATE(:${c}, 'YYYY-MM-DD')`
+           : `:${c}`
+       )
+       .join(", ")})`;
 
   // All-or-nothing load. autoCommit is off so that if the database rejects
   // even one row we roll the whole batch back — a partially loaded
