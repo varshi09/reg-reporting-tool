@@ -266,32 +266,28 @@ export default function DashboardPage() {
             </p>
 
             <div className="mt-4 flex flex-col gap-2">
-              {reportDetails.length === 0 ? (
-                <p className="text-sm text-zinc-500">No reports available.</p>
+              {reportDetails.filter((r) => r.generated).length === 0 ? (
+                <p className="text-sm text-zinc-500">No reports generated yet.</p>
               ) : (
-                reportDetails.map((report) => (
-                  <div
-                    key={report.href}
-                    className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 px-3 py-2"
-                  >
-                    <Link
-                      href={report.href}
-                      onClick={() => setShowReportsModal(false)}
-                      className="text-sm font-medium text-indigo-600 hover:underline"
+                reportDetails
+                  .filter((report) => report.generated)
+                  .map((report) => (
+                    <div
+                      key={report.href}
+                      className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 px-3 py-2"
                     >
-                      {report.title}
-                    </Link>
-                    {report.generated ? (
+                      <Link
+                        href={report.href}
+                        onClick={() => setShowReportsModal(false)}
+                        className="text-sm font-medium text-indigo-600 hover:underline"
+                      >
+                        {report.title}
+                      </Link>
                       <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
                         Generated
                       </span>
-                    ) : (
-                      <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                        Not yet generated
-                      </span>
-                    )}
-                  </div>
-                ))
+                    </div>
+                  ))
               )}
             </div>
 
