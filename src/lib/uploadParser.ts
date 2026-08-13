@@ -27,10 +27,6 @@ export type ParsedUpload = {
   rows: UploadRow[];
   /** Rows that were read but will not be inserted, with the reason. */
   skipped: SkippedRow[];
-  /** Header columns found in the file that map to a destination column. */
-  columnsMatched: number;
-  /** Header columns the destination table requires. */
-  columnsExpected: number;
 };
 
 export type ParseUploadFileResult =
@@ -147,12 +143,7 @@ export async function parseUploadFile(
 
   return {
     ok: true,
-    parsed: {
-      rows,
-      skipped,
-      columnsMatched: columnIndexes.size,
-      columnsExpected: table.columns.length,
-    },
+    parsed: { rows, skipped },
   };
 }
 
