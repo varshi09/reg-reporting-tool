@@ -71,7 +71,7 @@ export async function parseUploadFile(
   const columnIndexes = new Map<string, number>();
   headerRow.eachCell((cell, colNumber) => {
     const header = normalizeHeader(cell.value);
-    const match = table.columns.find((c) => c.header === header);
+    const match = table.columns.find((c) => normalizeHeader(c.column) === header);
     if (match) columnIndexes.set(match.column, colNumber);
   });
 
