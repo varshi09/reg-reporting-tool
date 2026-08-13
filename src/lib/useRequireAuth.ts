@@ -9,18 +9,30 @@ export function useRequireAuth() {
   const [username, setUsername] = useState("");
 
   useEffect(() => {
-    const isLoggedIn = sessionStorage.getItem("rrt_logged_in") === "true";
-    if (!isLoggedIn) {
-      router.replace("/login");
-      return;
+    let cancelled = false;
+
+    async function loadSession() {
+      const response = await fetch("/api/auth/me");
+      if (cancelled) return;
+
+      if (!response.ok) {
+        router.replace("/login");
+        return;
+      }
+
+      const data = await response.json();
+      setUsername(data.username ?? "");
+      setChecked(true);
     }
-    setUsername(sessionStorage.getItem("rrt_username") ?? "");
-    setChecked(true);
+
+    loadSession();
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
-  function logout() {
-    sessionStorage.removeItem("rrt_logged_in");
-    sessionStorage.removeItem("rrt_username");
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
   }
 
