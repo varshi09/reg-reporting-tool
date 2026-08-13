@@ -1,6 +1,9 @@
 export type UploadColumn = {
-  header: string; // normalized (lowercase, alphanumeric only) header expected in the file
-  column: string; // destination DB column
+  // Destination DB column. Also the header this column is expected under in
+  // the uploaded file — matched case/spacing-insensitively via
+  // normalizeHeader(), so "customer_name", "Customer Name", and
+  // "CUSTOMERNAME" all match a column named customer_name.
+  column: string;
   maxSize: number;
 };
 
@@ -18,8 +21,8 @@ export const UPLOAD_TABLES: UploadTableConfig[] = [
     key: "DIM_CUSTOMER",
     label: "Customer data",
     columns: [
-      { header: "customername", column: "customer_name", maxSize: 200 },
-      { header: "customernumber", column: "customer_number", maxSize: 50 },
+      { column: "customer_name", maxSize: 200 },
+      { column: "customer_number", maxSize: 50 },
     ],
   },
 ];
