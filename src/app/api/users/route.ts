@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { withConnection } from "@/lib/db";
+import { validatePassword } from "@/lib/passwordPolicy";
 
 type UserRow = { USERNAME: string; CREATED_AT: string };
 
 export async function GET() {
-  const users = await withConnection(async (connection) => {
+  const users: UserRow[] = await withConnection(async (connection) => {
     const result = await connection.execute<UserRow>(
       `SELECT username, created_at FROM USERS ORDER BY created_at`
     );
@@ -28,11 +29,9 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
-  if (password.length < 6) {
-    return NextResponse.json(
-      { error: "Password must be at least 6 characters." },
-      { status: 400 }
-    );
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    return NextResponse.json({ error: passwordError }, { status: 400 });
   }
 
   const passwordHash = bcrypt.hashSync(password, 10);
