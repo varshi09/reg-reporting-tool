@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode, type MouseEvent } from "react";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import {
   IconHome,
@@ -18,6 +18,7 @@ import {
   IconLogout,
   IconChevronDown,
   IconCheckCircle,
+  IconX,
 } from "@/components/icons";
 
 const NAV_ITEMS = [
@@ -106,6 +107,17 @@ export default function AppShell({
 
   async function handleMarkAllRead() {
     await fetch("/api/notifications/mark-all-read", { method: "POST" });
+    loadNotifications();
+  }
+
+  async function handleClearOne(event: MouseEvent, id: number) {
+    event.stopPropagation();
+    await fetch(`/api/notifications/${id}`, { method: "DELETE" });
+    loadNotifications();
+  }
+
+  async function handleClearAll() {
+    await fetch("/api/notifications/clear-all", { method: "POST" });
     loadNotifications();
   }
 
@@ -213,14 +225,24 @@ export default function AppShell({
                 <div className="absolute right-0 z-20 mt-2 w-80 rounded-lg border border-zinc-200 bg-white shadow-lg">
                   <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-2.5">
                     <p className="text-sm font-semibold text-zinc-900">Notifications</p>
-                    {unreadCount > 0 && (
-                      <button
-                        onClick={handleMarkAllRead}
-                        className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
-                      >
-                        Mark all read
-                      </button>
-                    )}
+                    <div className="flex items-center gap-3">
+                      {unreadCount > 0 && (
+                        <button
+                          onClick={handleMarkAllRead}
+                          className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                        >
+                          Mark all read
+                        </button>
+                      )}
+                      {notifications.length > 0 && (
+                        <button
+                          onClick={handleClearAll}
+                          className="text-xs font-medium text-zinc-500 hover:text-zinc-700"
+                        >
+                          Clear all
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="max-h-80 overflow-y-auto">
                     {notifications.length === 0 ? (
@@ -229,27 +251,38 @@ export default function AppShell({
                       </p>
                     ) : (
                       notifications.map((n) => (
-                        <button
+                        <div
                           key={n.id}
-                          onClick={() => handleNotificationClick(n)}
-                          className={`flex w-full flex-col gap-0.5 border-b border-zinc-50 px-4 py-2.5 text-left transition-colors last:border-b-0 hover:bg-zinc-50 ${
+                          className={`group relative border-b border-zinc-50 last:border-b-0 ${
                             n.isRead ? "" : "bg-indigo-50/50"
                           }`}
                         >
-                          <span className="flex items-start gap-2">
-                            {!n.isRead && (
-                              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500" />
-                            )}
-                            <span
-                              className={`text-sm ${n.isRead ? "text-zinc-600" : "font-medium text-zinc-900"}`}
-                            >
-                              {n.message}
+                          <button
+                            onClick={() => handleNotificationClick(n)}
+                            className="flex w-full flex-col gap-0.5 py-2.5 pl-4 pr-9 text-left transition-colors hover:bg-zinc-50"
+                          >
+                            <span className="flex items-start gap-2">
+                              {!n.isRead && (
+                                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500" />
+                              )}
+                              <span
+                                className={`text-sm ${n.isRead ? "text-zinc-600" : "font-medium text-zinc-900"}`}
+                              >
+                                {n.message}
+                              </span>
                             </span>
-                          </span>
-                          <span className="pl-3.5 text-xs text-zinc-400">
-                            {timeAgo(n.createdAt)}
-                          </span>
-                        </button>
+                            <span className="pl-3.5 text-xs text-zinc-400">
+                              {timeAgo(n.createdAt)}
+                            </span>
+                          </button>
+                          <button
+                            onClick={(e) => handleClearOne(e, n.id)}
+                            aria-label="Clear notification"
+                            className="absolute right-2.5 top-2.5 rounded p-1 text-zinc-300 opacity-0 transition-opacity hover:bg-zinc-100 hover:text-zinc-600 group-hover:opacity-100"
+                          >
+                            <IconX className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       ))
                     )}
                   </div>
