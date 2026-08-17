@@ -5,6 +5,9 @@ oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
 // stream objects instead of plain strings, breaking any code that expects
 // to read the column value directly.
 oracledb.fetchAsString = [oracledb.CLOB];
+// Same reasoning for BLOB (e.g. UPLOAD_LOG.file_content) — without this it
+// comes back as a Lob stream instead of a Buffer.
+oracledb.fetchAsBuffer = [oracledb.BLOB];
 
 let pool: oracledb.Pool | null = null;
 
