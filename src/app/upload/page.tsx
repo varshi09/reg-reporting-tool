@@ -14,11 +14,12 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024;
 type UploadResult = {
   targetTable: string;
   totalRows: number;
-  insertedCount: number;
-  /** False when the batch was rolled back because a record failed to insert. */
-  committed: boolean;
+  /**
+   * PENDING: staged, waiting on a Checker. REJECTED: never reached review —
+   * the file itself failed validation, same all-or-nothing rule as before.
+   */
+  status: "PENDING" | "REJECTED";
   skipped: { record: number; reason: string }[];
-  errors: { record?: number; reason: string }[];
 };
 
 type UploadPreview = {
@@ -41,6 +42,7 @@ type LogEntry = {
   INSERTED_COUNT: number;
   FAILED_COUNT: number;
   FAILURE_REASONS: string | null;
+  STATUS: "PENDING" | "APPROVED" | "REJECTED";
 };
 
 function formatBytes(bytes: number): string {
@@ -71,6 +73,7 @@ export default function UploadPage() {
   const [result, setResult] = useState<UploadResult | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
   const [history, setHistory] = useState<LogEntry[]>([]);
+  const [makerDatasets, setMakerDatasets] = useState<string[] | null>(null);
 
   // History is scoped to the data of the current reporting period (the
   // previous month-end), matched on time_key rather than upload timestamp.
@@ -88,6 +91,22 @@ export default function UploadPage() {
   useEffect(() => {
     loadHistory();
   }, [loadHistory]);
+
+  useEffect(() => {
+    if (!username) return;
+    fetch(`/api/users/${encodeURIComponent(username)}/roles`)
+      .then((r) => (r.ok ? r.json() : { roles: [] }))
+      .then((data) => {
+        const keys = (data.roles ?? [])
+          .filter((r: { role: string }) => r.role === "MAKER")
+          .map((r: { datasetKey: string }) => r.datasetKey);
+        setMakerDatasets(keys);
+      });
+  }, [username]);
+
+  const uploadableTables = UPLOAD_TABLES.filter((t) =>
+    (makerDatasets ?? []).includes(t.key)
+  );
 
   function acceptFile(candidate: File | undefined | null) {
     setError("");
@@ -204,7 +223,6 @@ export default function UploadPage() {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("timeKey", timeKey.replace(/-/g, ""));
-    formData.append("uploadedBy", username);
     formData.append("targetTable", preview.targetTable);
 
     try {
@@ -269,12 +287,18 @@ export default function UploadPage() {
               <option value="" disabled>
                 Select...
               </option>
-              {UPLOAD_TABLES.map((t) => (
+              {uploadableTables.map((t) => (
                 <option key={t.key} value={t.key}>
                   {t.label}
                 </option>
               ))}
             </select>
+            {makerDatasets !== null && uploadableTables.length === 0 && (
+              <p className="text-xs text-amber-600">
+                You&rsquo;re not set up as a Maker for any dataset yet — ask an
+                admin to assign you one in Settings.
+              </p>
+            )}
           </div>
 
           <div className="mt-4 flex flex-col gap-1.5">
@@ -383,42 +407,29 @@ export default function UploadPage() {
 
         {result && (
           <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-md bg-emerald-100 text-lg text-emerald-600">
-              ✅
+            <span
+              className={`flex h-9 w-9 items-center justify-center rounded-md text-lg ${
+                result.status === "PENDING"
+                  ? "bg-amber-100 text-amber-600"
+                  : "bg-red-100 text-red-600"
+              }`}
+            >
+              {result.status === "PENDING" ? "⏳" : "🚫"}
             </span>
             <p className="mt-3 text-sm font-semibold text-zinc-900">
-              Load complete — {result.targetTable}
+              {result.status === "PENDING"
+                ? `Submitted for review — ${result.targetTable}`
+                : `Rejected before review — ${result.targetTable}`}
             </p>
-            <div className="mt-3 grid grid-cols-3 gap-3">
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
-                <p className="text-lg font-semibold text-emerald-700">
-                  {result.insertedCount}
-                </p>
-                <p className="text-xs text-emerald-700">Inserted</p>
-              </div>
-              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-                <p className="text-lg font-semibold text-amber-700">
-                  {result.skipped.length}
-                </p>
-                <p className="text-xs text-amber-700">Skipped</p>
-              </div>
-              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
-                <p className="text-lg font-semibold text-zinc-700">
-                  {result.errors.length}
-                </p>
-                <p className="text-xs text-zinc-600">Failed</p>
-              </div>
-            </div>
-            {(result.skipped.length > 0 || result.errors.length > 0) && (
+            <p className="mt-1 text-sm text-zinc-500">
+              {result.status === "PENDING"
+                ? `${result.totalRows} rows are waiting on a checker's approval. Nothing has been written yet.`
+                : "The file itself had problems, so it was never submitted for review."}
+            </p>
+            {result.skipped.length > 0 && (
               <ul className="mt-3 flex flex-col gap-1 text-sm text-red-600">
                 {result.skipped.map((s, i) => (
                   <li key={`skip-${i}`}>Record {s.record}: {s.reason}</li>
-                ))}
-                {result.errors.map((e, i) => (
-                  <li key={`err-${i}`}>
-                    {e.record ? `Record ${e.record}: ` : ""}
-                    {e.reason}
-                  </li>
                 ))}
               </ul>
             )}
@@ -444,6 +455,7 @@ export default function UploadPage() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="text-xs text-zinc-500">
+                    <th className="pb-2 pr-4 font-medium">Status</th>
                     <th className="pb-2 pr-4 font-medium">Table</th>
                     <th className="pb-2 pr-4 font-medium">File</th>
                     <th className="pb-2 pr-4 font-medium">Time key</th>
@@ -461,6 +473,23 @@ export default function UploadPage() {
                       key={entry.ID}
                       className="border-t border-zinc-100 text-zinc-700 hover:bg-zinc-50 transition-colors"
                     >
+                      <td className="py-2 pr-4">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                            entry.STATUS === "APPROVED"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : entry.STATUS === "REJECTED"
+                                ? "bg-red-100 text-red-700"
+                                : "bg-amber-100 text-amber-700"
+                          }`}
+                        >
+                          {entry.STATUS === "APPROVED"
+                            ? "Approved"
+                            : entry.STATUS === "REJECTED"
+                              ? "Rejected"
+                              : "Pending"}
+                        </span>
+                      </td>
                       <td className="py-2 pr-4">{entry.TARGET_TABLE}</td>
                       <td className="py-2 pr-4">{entry.FILE_NAME}</td>
                       <td className="py-2 pr-4">{entry.TIME_KEY}</td>
@@ -588,7 +617,7 @@ export default function UploadPage() {
                 }
                 className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
               >
-                {isUploading ? "Loading..." : "Confirm & load"}
+                {isUploading ? "Submitting..." : "Submit for review"}
               </button>
             </div>
           </div>
@@ -599,33 +628,24 @@ export default function UploadPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-lg">
             {(() => {
-              const problemCount = result.skipped.length + result.errors.length;
-              const allLoaded = problemCount === 0;
-              // A rollback means nothing was written at all, which is a
-              // materially different outcome from "loaded, with some rows
-              // skipped" — the heading must not blur the two.
-              const rolledBack = !result.committed;
+              const pending = result.status === "PENDING";
               return (
                 <>
                   <div className="flex items-center gap-2.5">
                     <span
                       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-lg ${
-                        rolledBack
-                          ? "bg-red-100 text-red-600"
-                          : allLoaded
-                            ? "bg-emerald-100 text-emerald-600"
-                            : "bg-amber-100 text-amber-600"
+                        pending
+                          ? "bg-amber-100 text-amber-600"
+                          : "bg-red-100 text-red-600"
                       }`}
                     >
-                      {rolledBack ? "🚫" : allLoaded ? "✅" : "⚠️"}
+                      {pending ? "⏳" : "🚫"}
                     </span>
                     <div>
                       <p className="text-sm font-semibold text-zinc-900">
-                        {rolledBack
-                          ? "Nothing loaded — changes rolled back"
-                          : allLoaded
-                            ? "Load complete"
-                            : "Loaded with issues"}
+                        {pending
+                          ? "Submitted for review"
+                          : "Rejected before review"}
                       </p>
                       <p className="text-xs text-zinc-500">
                         {result.targetTable}
@@ -633,71 +653,30 @@ export default function UploadPage() {
                     </div>
                   </div>
 
-                  {rolledBack && (
+                  {pending ? (
+                    <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                      {result.totalRows} rows are staged and waiting on a
+                      checker&rsquo;s approval. Nothing has been written to{" "}
+                      {result.targetTable} yet — you&rsquo;ll see it in the
+                      history below once it&rsquo;s decided.
+                    </p>
+                  ) : (
                     <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                      A record failed to insert, so the entire batch was rolled
-                      back. Nothing was written to {result.targetTable}. Fix the
-                      records below and upload the file again.
+                      The file itself had problems, so it was never sent for
+                      review. Fix the records below and upload it again.
                     </p>
                   )}
 
-                  <div className="mt-4 grid grid-cols-3 gap-3">
-                    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
-                      <p className="text-lg font-semibold text-emerald-700">
-                        {result.insertedCount}
-                      </p>
-                      <p className="text-xs text-emerald-700">Inserted</p>
-                    </div>
-                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-                      <p className="text-lg font-semibold text-amber-700">
-                        {result.skipped.length}
-                      </p>
-                      <p className="text-xs text-amber-700">Skipped</p>
-                    </div>
-                    <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
-                      <p className="text-lg font-semibold text-red-700">
-                        {result.errors.length}
-                      </p>
-                      <p className="text-xs text-red-700">Failed</p>
-                    </div>
-                  </div>
-
                   {result.skipped.length > 0 && (
                     <div className="mt-4">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                        Skipped before loading ({result.skipped.length})
+                      <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
+                        Problems found ({result.skipped.length})
                       </p>
-                      <p className="mt-0.5 text-xs text-zinc-500">
-                        These rows were rejected by the file checks and never
-                        reached the database.
-                      </p>
-                      <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border border-amber-200 bg-amber-50/50 p-2 text-xs text-zinc-700">
+                      <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border border-red-200 bg-red-50/50 p-2 text-xs text-zinc-700">
                         {result.skipped.map((s, i) => (
                           <li key={`skip-${i}`} className="py-0.5">
                             <span className="font-medium">Record {s.record}:</span>{" "}
                             {s.reason}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {result.errors.length > 0 && (
-                    <div className="mt-4">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
-                        Rejected by the database ({result.errors.length})
-                      </p>
-                      <p className="mt-0.5 text-xs text-zinc-500">
-                        These rows passed the file checks but the database
-                        refused them.
-                      </p>
-                      <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border border-red-200 bg-red-50/50 p-2 text-xs text-zinc-700">
-                        {result.errors.map((e, i) => (
-                          <li key={`err-${i}`} className="py-0.5">
-                            {e.record !== undefined && (
-                              <span className="font-medium">Record {e.record}: </span>
-                            )}
-                            {e.reason}
                           </li>
                         ))}
                       </ul>
