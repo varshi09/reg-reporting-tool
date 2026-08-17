@@ -5,8 +5,15 @@ import { isAdmin, getCheckerDatasets } from "@/lib/roles";
 import { getUploadTable } from "@/lib/uploadTables";
 import type { UploadRow } from "@/lib/uploadParser";
 import { insertRows, summarizeFailureReasons } from "@/lib/uploadInsert";
+import { notify } from "@/lib/notifications";
 
-type PendingRow = { TARGET_TABLE: string; STATUS: string; ROWS_JSON: string | null };
+type PendingRow = {
+  TARGET_TABLE: string;
+  STATUS: string;
+  ROWS_JSON: string | null;
+  FILE_NAME: string;
+  UPLOADED_BY: string;
+};
 
 export async function POST(
   request: Request,
@@ -34,7 +41,8 @@ export async function POST(
 
   const row = await withConnection(async (connection) => {
     const result = await connection.execute<PendingRow>(
-      `SELECT target_table, status, rows_json FROM UPLOAD_LOG WHERE id = :id`,
+      `SELECT target_table, status, rows_json, file_name, uploaded_by
+       FROM UPLOAD_LOG WHERE id = :id`,
       { id }
     );
     return result.rows?.[0] ?? null;
@@ -61,6 +69,8 @@ export async function POST(
     }
   }
 
+  const datasetLabel = getUploadTable(row.TARGET_TABLE)?.label ?? row.TARGET_TABLE;
+
   if (decision === "reject") {
     await withConnection((connection) =>
       connection.execute(
@@ -71,6 +81,11 @@ export async function POST(
         { reason, username, id },
         { autoCommit: true }
       )
+    );
+    await notify(
+      row.UPLOADED_BY,
+      `${username} rejected "${row.FILE_NAME}" (${datasetLabel}): ${reason}`,
+      "/upload"
     );
     return NextResponse.json({ status: "REJECTED" });
   }
@@ -122,6 +137,12 @@ export async function POST(
       { insertedCount, username, id },
       { autoCommit: true }
     )
+  );
+
+  await notify(
+    row.UPLOADED_BY,
+    `${username} approved "${row.FILE_NAME}" (${datasetLabel}) — ${insertedCount} rows loaded.`,
+    "/upload"
   );
 
   return NextResponse.json({ status: "APPROVED", insertedCount });
