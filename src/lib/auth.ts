@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { cookies } from "next/headers";
 import bcrypt from "bcryptjs";
 import { withConnection } from "@/lib/db";
 
@@ -66,4 +67,16 @@ export async function destroySession(token: string): Promise<void> {
       { autoCommit: true }
     )
   );
+}
+
+/**
+ * Resolves the caller's username from their session cookie, server-side.
+ * Never trust a client-submitted "uploadedBy"/"reviewedBy" style field for
+ * authorization decisions — this is the only source of truth for who is
+ * actually making the request.
+ */
+export async function getCurrentUsername(): Promise<string | null> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_COOKIE)?.value;
+  return token ? validateSession(token) : null;
 }
