@@ -5,25 +5,22 @@ import { getUploadTable } from "@/lib/uploadTables";
 import { parseUploadFile } from "@/lib/uploadParser";
 import { getCurrentUsername } from "@/lib/auth";
 import { getMakerDatasets, hasReviewerAvailable, getCheckersForDataset } from "@/lib/roles";
-import { summarizeFailureReasons } from "@/lib/uploadInsert";
 import { notifyMany } from "@/lib/notifications";
 
-/** Logs an upload that never reached review — the file itself had problems. */
+/** Logs an upload that never reached review — the file had no valid rows. */
 async function logAutoRejected(entry: {
   targetTable: string;
   fileName: string;
   timeKey: string;
   uploadedBy: string;
-  totalRows: number;
-  failedCount: number;
-  failureReasons: string | null;
+  fileContent: Buffer;
 }) {
   await withConnection((connection) =>
     connection.execute(
       `INSERT INTO UPLOAD_LOG
-         (target_table, file_name, time_key, uploaded_by, total_rows, inserted_count, failed_count, failure_reasons, status)
+         (target_table, file_name, time_key, uploaded_by, total_rows, inserted_count, failed_count, status, file_content)
        VALUES
-         (:targetTable, :fileName, :timeKey, :uploadedBy, :totalRows, 0, :failedCount, :failureReasons, 'REJECTED')`,
+         (:targetTable, :fileName, :timeKey, :uploadedBy, 0, 0, 0, 'REJECTED', :fileContent)`,
       entry,
       { autoCommit: true }
     )
@@ -81,35 +78,14 @@ export async function POST(request: Request) {
   }
 
   const originalFileName = file.name;
+  const fileContent = Buffer.from(await file.arrayBuffer());
 
   const parseResult = await parseUploadFile(file, table);
   if (!parseResult.ok) {
     return NextResponse.json({ error: parseResult.error }, { status: 400 });
   }
 
-  const { rows, skipped } = parseResult.parsed;
-
-  // Any problem blocks the entire load: if a single record fails the file
-  // checks nothing is staged for review, so a Checker never has to weigh in
-  // on a file that's simply broken. Enforced here rather than only in the UI.
-  if (skipped.length > 0) {
-    await logAutoRejected({
-      targetTable: table.key,
-      fileName: originalFileName,
-      timeKey,
-      uploadedBy,
-      totalRows: rows.length + skipped.length,
-      failedCount: skipped.length,
-      failureReasons: summarizeFailureReasons(skipped),
-    });
-    return NextResponse.json({
-      targetTable: table.key,
-      totalRows: rows.length + skipped.length,
-      status: "REJECTED",
-      skipped,
-      errors: [],
-    });
-  }
+  const { rows } = parseResult.parsed;
 
   if (rows.length === 0) {
     await logAutoRejected({
@@ -117,25 +93,24 @@ export async function POST(request: Request) {
       fileName: originalFileName,
       timeKey,
       uploadedBy,
-      totalRows: 0,
-      failedCount: skipped.length,
-      failureReasons: summarizeFailureReasons(skipped),
+      fileContent,
     });
     return NextResponse.json(
-      { error: "No valid data rows found in the file.", skipped },
+      { error: "No data rows found in the file." },
       { status: 400 }
     );
   }
 
   // Nothing is written to the destination table here. The validated rows are
   // staged as PENDING; a Checker's approval is what actually triggers the
-  // insert, via POST /api/approvals/[id].
+  // insert, via POST /api/approvals/[id]. The original file is kept too, so
+  // the Checker can open it directly rather than reviewing blind.
   const id = await withConnection(async (connection) => {
     const result = await connection.execute<{ ID: number }>(
       `INSERT INTO UPLOAD_LOG
-         (target_table, file_name, time_key, uploaded_by, total_rows, inserted_count, failed_count, status, rows_json)
+         (target_table, file_name, time_key, uploaded_by, total_rows, inserted_count, failed_count, status, rows_json, file_content)
        VALUES
-         (:targetTable, :fileName, :timeKey, :uploadedBy, :totalRows, 0, 0, 'PENDING', :rowsJson)
+         (:targetTable, :fileName, :timeKey, :uploadedBy, :totalRows, 0, 0, 'PENDING', :rowsJson, :fileContent)
        RETURNING id INTO :id`,
       {
         targetTable: table.key,
@@ -144,6 +119,7 @@ export async function POST(request: Request) {
         uploadedBy,
         totalRows: rows.length,
         rowsJson: JSON.stringify(rows),
+        fileContent,
         id: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
       },
       { autoCommit: true }
