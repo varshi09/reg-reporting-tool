@@ -8,6 +8,7 @@ import {
   BRF01_SUPTECH_ENTITY_GROUPS,
   BRF01_SUPTECH_DATA_SOURCES,
 } from "@/lib/brf01SupTechTemplate";
+import { getReportingPeriod } from "@/lib/reportingPeriod";
 
 type Brf01SupTechEntry = {
   code: string;
@@ -46,18 +47,13 @@ export default function Brf01SupTechReportPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    async function initDefaults() {
-      const response = await fetch("/api/brf01-suptech/latest-time-key");
-      const data = response.ok ? await response.json() : { timeKey: null };
-      const latest = data.timeKey ? toDateInputValue(data.timeKey) : "";
-      setDraftTimeKey(latest);
-      setAppliedFilters({
-        timeKey: latest,
-        entityGroups: [BRF01_SUPTECH_ENTITY_GROUPS[0]],
-        dataSources: [BRF01_SUPTECH_DATA_SOURCES[0]],
-      });
-    }
-    initDefaults();
+    const defaultTimeKey = toDateInputValue(getReportingPeriod().timeKey);
+    setDraftTimeKey(defaultTimeKey);
+    setAppliedFilters({
+      timeKey: defaultTimeKey,
+      entityGroups: [BRF01_SUPTECH_ENTITY_GROUPS[0]],
+      dataSources: [BRF01_SUPTECH_DATA_SOURCES[0]],
+    });
   }, []);
 
   const loadEntries = useCallback(async () => {
