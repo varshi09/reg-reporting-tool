@@ -13,6 +13,7 @@ type LogEntry = {
   INSERTED_COUNT: number;
   FAILED_COUNT: number;
   FAILURE_REASONS: string | null;
+  STATUS: "PENDING" | "APPROVED" | "REJECTED";
 };
 
 const TARGET_TABLE = "REF_BRF_CONS_MAPPING_TABLE";
@@ -156,6 +157,7 @@ export default function ReportsPage() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="text-xs text-zinc-500">
+                    <th className="pb-2 pr-4 font-medium">Status</th>
                     <th className="pb-2 pr-4 font-medium">File</th>
                     <th className="pb-2 pr-4 font-medium">Time key</th>
                     <th className="pb-2 pr-4 font-medium">Uploaded by</th>
@@ -172,6 +174,23 @@ export default function ReportsPage() {
                       key={entry.ID}
                       className="border-t border-zinc-100 text-zinc-700 hover:bg-zinc-50 transition-colors"
                     >
+                      <td className="py-2 pr-4">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                            entry.STATUS === "APPROVED"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : entry.STATUS === "REJECTED"
+                                ? "bg-red-100 text-red-700"
+                                : "bg-amber-100 text-amber-700"
+                          }`}
+                        >
+                          {entry.STATUS === "APPROVED"
+                            ? "Approved"
+                            : entry.STATUS === "REJECTED"
+                              ? "Rejected"
+                              : "Pending"}
+                        </span>
+                      </td>
                       <td className="py-2 pr-4">{entry.FILE_NAME}</td>
                       <td className="py-2 pr-4">{formatTimeKey(entry.TIME_KEY)}</td>
                       <td className="py-2 pr-4">{entry.UPLOADED_BY}</td>

@@ -1,15 +1,8 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import bcrypt from "bcryptjs";
 import { withConnection } from "@/lib/db";
-import { validateSession, SESSION_COOKIE } from "@/lib/auth";
+import { getCurrentUsername } from "@/lib/auth";
 import { validatePassword } from "@/lib/passwordPolicy";
-
-async function currentUsername(): Promise<string | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(SESSION_COOKIE)?.value;
-  return token ? validateSession(token) : null;
-}
 
 /**
  * Renames a user, resets their password, or both. Either field is optional
@@ -41,7 +34,7 @@ export async function PATCH(
       return NextResponse.json({ error: passwordError }, { status: 400 });
     }
   }
-  if (isAdmin === false && username === (await currentUsername())) {
+  if (isAdmin === false && username === (await getCurrentUsername())) {
     return NextResponse.json(
       { error: "You can't remove your own admin access." },
       { status: 400 }
@@ -103,7 +96,7 @@ export async function DELETE(
 ) {
   const { username } = await params;
 
-  const self = await currentUsername();
+  const self = await getCurrentUsername();
   if (self === username) {
     return NextResponse.json(
       { error: "You can't delete the account you're currently signed in as." },
