@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 
-type UserRow = { username: string; createdAt: string };
+type UserRow = { username: string; createdAt: string; isAdmin: boolean };
 
 export default function UsersPage() {
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -109,6 +109,11 @@ export default function UsersPage() {
                       <td className="py-2 pr-4">
                         <div className="flex items-center gap-2">
                           <span>{u.username}</span>
+                          {u.isAdmin && (
+                            <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
+                              Admin
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() => copyUsername(u.username)}
