@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import {
   IconHome,
@@ -33,6 +34,25 @@ const NAV_ITEMS = [
 
 export type NavHref = (typeof NAV_ITEMS)[number]["href"];
 
+type Notification = {
+  id: number;
+  message: string;
+  link: string | null;
+  isRead: boolean;
+  createdAt: string;
+};
+
+function timeAgo(dateStr: string): string {
+  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (seconds < 60) return "Just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 export default function AppShell({
   active,
   title,
@@ -43,7 +63,51 @@ export default function AppShell({
   children: ReactNode;
 }) {
   const { checked, logout, username } = useRequireAuth();
+  const router = useRouter();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  const loadNotifications = useCallback(async () => {
+    const response = await fetch("/api/notifications");
+    if (!response.ok) return;
+    const data = await response.json();
+    setNotifications(data.notifications ?? []);
+    setUnreadCount(data.unreadCount ?? 0);
+  }, []);
+
+  useEffect(() => {
+    if (!checked) return;
+    loadNotifications();
+    const interval = setInterval(loadNotifications, 30000);
+    return () => clearInterval(interval);
+  }, [checked, loadNotifications]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setNotifOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  async function handleNotificationClick(notification: Notification) {
+    if (!notification.isRead) {
+      await fetch(`/api/notifications/${notification.id}/read`, { method: "POST" });
+      loadNotifications();
+    }
+    setNotifOpen(false);
+    if (notification.link) router.push(notification.link);
+  }
+
+  async function handleMarkAllRead() {
+    await fetch("/api/notifications/mark-all-read", { method: "POST" });
+    loadNotifications();
+  }
 
   if (!checked) {
     return null;
@@ -131,12 +195,67 @@ export default function AppShell({
             <h1 className="text-lg font-semibold text-zinc-900">{title}</h1>
           </div>
           <div className="flex items-center gap-4">
-            <button
-              className="text-zinc-400 transition-colors hover:text-zinc-600"
-              aria-label="Notifications"
-            >
-              <IconBell className="h-5 w-5" />
-            </button>
+            <div className="relative" ref={notifRef}>
+              <button
+                onClick={() => setNotifOpen((v) => !v)}
+                className="relative text-zinc-400 transition-colors hover:text-zinc-600"
+                aria-label="Notifications"
+              >
+                <IconBell className="h-5 w-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {notifOpen && (
+                <div className="absolute right-0 z-20 mt-2 w-80 rounded-lg border border-zinc-200 bg-white shadow-lg">
+                  <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-2.5">
+                    <p className="text-sm font-semibold text-zinc-900">Notifications</p>
+                    {unreadCount > 0 && (
+                      <button
+                        onClick={handleMarkAllRead}
+                        className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <p className="px-4 py-6 text-center text-sm text-zinc-500">
+                        No notifications yet.
+                      </p>
+                    ) : (
+                      notifications.map((n) => (
+                        <button
+                          key={n.id}
+                          onClick={() => handleNotificationClick(n)}
+                          className={`flex w-full flex-col gap-0.5 border-b border-zinc-50 px-4 py-2.5 text-left transition-colors last:border-b-0 hover:bg-zinc-50 ${
+                            n.isRead ? "" : "bg-indigo-50/50"
+                          }`}
+                        >
+                          <span className="flex items-start gap-2">
+                            {!n.isRead && (
+                              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500" />
+                            )}
+                            <span
+                              className={`text-sm ${n.isRead ? "text-zinc-600" : "font-medium text-zinc-900"}`}
+                            >
+                              {n.message}
+                            </span>
+                          </span>
+                          <span className="pl-3.5 text-xs text-zinc-400">
+                            {timeAgo(n.createdAt)}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               onClick={logout}
               className="flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
