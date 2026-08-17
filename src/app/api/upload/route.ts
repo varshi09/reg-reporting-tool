@@ -4,8 +4,9 @@ import { withConnection } from "@/lib/db";
 import { getUploadTable } from "@/lib/uploadTables";
 import { parseUploadFile } from "@/lib/uploadParser";
 import { getCurrentUsername } from "@/lib/auth";
-import { getMakerDatasets, hasReviewerAvailable } from "@/lib/roles";
+import { getMakerDatasets, hasReviewerAvailable, getCheckersForDataset } from "@/lib/roles";
 import { summarizeFailureReasons } from "@/lib/uploadInsert";
+import { notifyMany } from "@/lib/notifications";
 
 /** Logs an upload that never reached review — the file itself had problems. */
 async function logAutoRejected(entry: {
@@ -149,6 +150,13 @@ export async function POST(request: Request) {
     );
     return (result.outBinds as { id: number[] }).id[0];
   });
+
+  const checkers = await getCheckersForDataset(table.key);
+  await notifyMany(
+    checkers,
+    `${uploadedBy} uploaded "${originalFileName}" for ${table.label} — waiting on your review.`,
+    "/approvals"
+  );
 
   return NextResponse.json({
     id,

@@ -45,6 +45,18 @@ export async function getCheckerDatasets(
   return rows.map((r) => r.DATASET_KEY);
 }
 
+/** Usernames explicitly assigned as Checker for a dataset — who to notify on upload. */
+export async function getCheckersForDataset(datasetKey: string): Promise<string[]> {
+  const rows: { USERNAME: string }[] = await withConnection(async (connection) => {
+    const result = await connection.execute<{ USERNAME: string }>(
+      `SELECT username FROM DATASET_ROLES WHERE dataset_key = :datasetKey AND role = 'CHECKER'`,
+      { datasetKey }
+    );
+    return result.rows ?? [];
+  });
+  return rows.map((r) => r.USERNAME);
+}
+
 /** Whether anyone (any human Checker, or an Admin) can review this dataset. */
 export async function hasReviewerAvailable(datasetKey: string): Promise<boolean> {
   const checkerCount = await withConnection(async (connection) => {
