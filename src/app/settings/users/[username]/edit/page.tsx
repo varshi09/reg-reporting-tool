@@ -1,9 +1,12 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
+import { UPLOAD_TABLES } from "@/lib/uploadTables";
+
+type RoleValue = "MAKER" | "CHECKER" | "";
 
 export default function EditUserPage() {
   const params = useParams<{ username: string }>();
@@ -20,6 +23,97 @@ export default function EditUserPage() {
   const [resetError, setResetError] = useState("");
   const [resetSuccess, setResetSuccess] = useState("");
   const [isResetting, setIsResetting] = useState(false);
+
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminError, setAdminError] = useState("");
+  const [adminSuccess, setAdminSuccess] = useState("");
+  const [isSavingAdmin, setIsSavingAdmin] = useState(false);
+
+  const [roles, setRoles] = useState<Record<string, RoleValue>>({});
+  const [rolesError, setRolesError] = useState("");
+  const [rolesSuccess, setRolesSuccess] = useState("");
+  const [isSavingRoles, setIsSavingRoles] = useState(false);
+  const [isLoadingRoles, setIsLoadingRoles] = useState(true);
+
+  const loadDetails = useCallback(async () => {
+    setIsLoadingRoles(true);
+    const [usersRes, rolesRes] = await Promise.all([
+      fetch("/api/users"),
+      fetch(`/api/users/${encodeURIComponent(username)}/roles`),
+    ]);
+    if (usersRes.ok) {
+      const data = await usersRes.json();
+      const match = data.users?.find(
+        (u: { username: string; isAdmin: boolean }) => u.username === username
+      );
+      setIsAdmin(match?.isAdmin ?? false);
+    }
+    if (rolesRes.ok) {
+      const data = await rolesRes.json();
+      const map: Record<string, RoleValue> = {};
+      for (const r of data.roles ?? []) {
+        map[r.datasetKey] = r.role;
+      }
+      setRoles(map);
+    }
+    setIsLoadingRoles(false);
+  }, [username]);
+
+  useEffect(() => {
+    loadDetails();
+  }, [loadDetails]);
+
+  async function handleSaveRoles() {
+    setRolesError("");
+    setRolesSuccess("");
+    setIsSavingRoles(true);
+    try {
+      const payload: Record<string, RoleValue | null> = {};
+      for (const table of UPLOAD_TABLES) {
+        payload[table.key] = roles[table.key] || null;
+      }
+      const response = await fetch(`/api/users/${encodeURIComponent(username)}/roles`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: payload }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setRolesError(data.error ?? "Couldn't save roles.");
+        return;
+      }
+      setRolesSuccess("Roles saved.");
+    } catch {
+      setRolesError("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      setIsSavingRoles(false);
+    }
+  }
+
+  async function handleToggleAdmin() {
+    setAdminError("");
+    setAdminSuccess("");
+    setIsSavingAdmin(true);
+    const nextValue = !isAdmin;
+    try {
+      const response = await fetch(`/api/users/${encodeURIComponent(username)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isAdmin: nextValue }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setAdminError(data.error ?? "Couldn't update admin access.");
+        return;
+      }
+      setIsAdmin(nextValue);
+      setAdminSuccess(nextValue ? "Admin access granted." : "Admin access removed.");
+    } catch {
+      setAdminError("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      setIsSavingAdmin(false);
+    }
+  }
 
   async function handleRename(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -180,6 +274,79 @@ export default function EditUserPage() {
               {isResetting ? "Resetting..." : "Reset password"}
             </button>
           </form>
+        </div>
+
+        <div className="max-w-md rounded-lg border border-zinc-200 bg-white shadow-sm p-6">
+          <p className="text-sm font-semibold text-black">Admin access</p>
+          <p className="mt-1 text-sm text-zinc-500">
+            Admins can manage users and see Settings and Report Library.
+            They can also approve or reject any upload as a backup checker,
+            regardless of dataset roles below.
+          </p>
+          <label className="mt-4 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={isAdmin}
+              onChange={handleToggleAdmin}
+              disabled={isSavingAdmin}
+              className="h-4 w-4 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <span className="text-sm text-zinc-700">This user is an admin</span>
+          </label>
+          {adminError && (
+            <p className="mt-2 text-sm text-red-600" role="alert">
+              {adminError}
+            </p>
+          )}
+          {adminSuccess && <p className="mt-2 text-sm text-emerald-600">{adminSuccess}</p>}
+        </div>
+
+        <div className="max-w-md rounded-lg border border-zinc-200 bg-white shadow-sm p-6">
+          <p className="text-sm font-semibold text-black">Dataset roles</p>
+          <p className="mt-1 text-sm text-zinc-500">
+            Maker can upload this dataset. Checker can approve or reject
+            uploads for it. A person can only hold one of the two per
+            dataset.
+          </p>
+          {isLoadingRoles ? (
+            <p className="mt-4 text-sm text-zinc-500">Loading...</p>
+          ) : (
+            <div className="mt-4 flex flex-col gap-3">
+              {UPLOAD_TABLES.map((table) => (
+                <div key={table.key} className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-zinc-700">{table.label}</span>
+                  <select
+                    value={roles[table.key] ?? ""}
+                    onChange={(e) =>
+                      setRoles((prev) => ({
+                        ...prev,
+                        [table.key]: e.target.value as RoleValue,
+                      }))
+                    }
+                    className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
+                  >
+                    <option value="">None</option>
+                    <option value="MAKER">Maker</option>
+                    <option value="CHECKER">Checker</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+          )}
+          {rolesError && (
+            <p className="mt-3 text-sm text-red-600" role="alert">
+              {rolesError}
+            </p>
+          )}
+          {rolesSuccess && <p className="mt-3 text-sm text-emerald-600">{rolesSuccess}</p>}
+          <button
+            type="button"
+            onClick={handleSaveRoles}
+            disabled={isSavingRoles || isLoadingRoles}
+            className="mt-4 w-fit rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {isSavingRoles ? "Saving..." : "Save roles"}
+          </button>
         </div>
       </div>
     </AppShell>
