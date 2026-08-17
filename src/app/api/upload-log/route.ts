@@ -36,7 +36,7 @@ export async function GET(request: Request) {
   const rows = await withConnection(async (connection) => {
     const result = await connection.execute(
       `SELECT id, target_table, file_name, time_key, uploaded_by, uploaded_at,
-              total_rows, inserted_count, failed_count, failure_reasons
+              total_rows, inserted_count, failed_count, failure_reasons, status
        FROM UPLOAD_LOG
        ${whereClause}
        ORDER BY uploaded_at DESC

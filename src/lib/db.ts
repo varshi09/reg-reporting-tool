@@ -1,6 +1,10 @@
 import oracledb from "oracledb";
 
 oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
+// Without this, CLOB columns (e.g. UPLOAD_LOG.rows_json) come back as Lob
+// stream objects instead of plain strings, breaking any code that expects
+// to read the column value directly.
+oracledb.fetchAsString = [oracledb.CLOB];
 
 let pool: oracledb.Pool | null = null;
 
