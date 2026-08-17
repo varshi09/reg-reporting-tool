@@ -107,53 +107,26 @@ export async function parseUploadFile(
   const rows: UploadRow[] = [];
   const skipped: SkippedRow[] = [];
 
+  // No per-row content validation: a column being blank or long doesn't
+  // block the load. The only requirement is that the file has the expected
+  // headers (checked above). Anything the database itself can't accept
+  // (e.g. a value too long for its column) surfaces later at approval time,
+  // through the same failure_reasons path used for any other insert error.
   for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
     // Row 1 is the header, so file row 2 is record 1.
-    const recordNumber = rowNumber - 1;
     const row = worksheet.getRow(rowNumber);
     const record: UploadRow = {};
     let hasAnyValue = false;
-    // Named so the user is told exactly which column caused the problem,
-    // rather than a generic "missing field" message.
-    const missingColumns: string[] = [];
-    const oversizedColumns: string[] = [];
 
     for (const col of table.columns) {
       const colIndex = columnIndexes.get(col.column)!;
       const value = cellValueToString(row.getCell(colIndex).value).trim();
-      if (value) {
-        hasAnyValue = true;
-        // Caught here rather than letting Oracle reject the row later with a
-        // cryptic ORA- error the user can't act on.
-        if (value.length > col.maxSize) {
-          oversizedColumns.push(
-            `${col.column} (${value.length} chars, max ${col.maxSize})`
-          );
-        }
-      } else {
-        missingColumns.push(col.column);
-      }
+      if (value) hasAnyValue = true;
       record[col.column] = value;
     }
 
     // Entirely blank row — not an error, just skip it silently.
     if (!hasAnyValue) continue;
-
-    if (missingColumns.length > 0) {
-      skipped.push({
-        record: recordNumber,
-        reason: `Missing a value for ${missingColumns.join(", ")}.`,
-      });
-      continue;
-    }
-
-    if (oversizedColumns.length > 0) {
-      skipped.push({
-        record: recordNumber,
-        reason: `Value too long for ${oversizedColumns.join(", ")}.`,
-      });
-      continue;
-    }
 
     rows.push(record);
   }
