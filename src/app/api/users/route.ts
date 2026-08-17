@@ -3,18 +3,22 @@ import bcrypt from "bcryptjs";
 import { withConnection } from "@/lib/db";
 import { validatePassword } from "@/lib/passwordPolicy";
 
-type UserRow = { USERNAME: string; CREATED_AT: string };
+type UserRow = { USERNAME: string; CREATED_AT: string; IS_ADMIN: number };
 
 export async function GET() {
   const users: UserRow[] = await withConnection(async (connection) => {
     const result = await connection.execute<UserRow>(
-      `SELECT username, created_at FROM USERS ORDER BY created_at`
+      `SELECT username, created_at, is_admin FROM USERS ORDER BY created_at`
     );
     return result.rows ?? [];
   });
 
   return NextResponse.json({
-    users: users.map((u) => ({ username: u.USERNAME, createdAt: u.CREATED_AT })),
+    users: users.map((u) => ({
+      username: u.USERNAME,
+      createdAt: u.CREATED_AT,
+      isAdmin: u.IS_ADMIN === 1,
+    })),
   });
 }
 

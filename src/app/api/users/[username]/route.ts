@@ -27,8 +27,9 @@ export async function PATCH(
   const newUsername =
     typeof body.newUsername === "string" ? body.newUsername.trim() : undefined;
   const password = typeof body.password === "string" ? body.password : undefined;
+  const isAdmin = typeof body.isAdmin === "boolean" ? body.isAdmin : undefined;
 
-  if (!newUsername && !password) {
+  if (!newUsername && !password && isAdmin === undefined) {
     return NextResponse.json(
       { error: "Nothing to update." },
       { status: 400 }
@@ -40,9 +41,15 @@ export async function PATCH(
       return NextResponse.json({ error: passwordError }, { status: 400 });
     }
   }
+  if (isAdmin === false && username === (await currentUsername())) {
+    return NextResponse.json(
+      { error: "You can't remove your own admin access." },
+      { status: 400 }
+    );
+  }
 
   const sets: string[] = [];
-  const binds: Record<string, string> = { username };
+  const binds: Record<string, string | number> = { username };
   if (newUsername) {
     sets.push("username = :newUsername");
     binds.newUsername = newUsername;
@@ -50,6 +57,10 @@ export async function PATCH(
   if (password) {
     sets.push("password_hash = :passwordHash");
     binds.passwordHash = bcrypt.hashSync(password, 10);
+  }
+  if (isAdmin !== undefined) {
+    sets.push("is_admin = :isAdmin");
+    binds.isAdmin = isAdmin ? 1 : 0;
   }
 
   try {
