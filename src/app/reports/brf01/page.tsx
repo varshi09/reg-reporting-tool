@@ -5,6 +5,7 @@ import AppShell from "@/components/AppShell";
 import MultiSelectDropdown from "@/components/MultiSelectDropdown";
 import type { Brf01Metrics } from "@/lib/brf01Template";
 import { BRF01_ENTITY_GROUPS, BRF01_DATA_SOURCES } from "@/lib/brf01Template";
+import { getReportingPeriod } from "@/lib/reportingPeriod";
 
 type Brf01Entry = {
   code: string;
@@ -38,18 +39,13 @@ export default function Brf01ReportPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    async function initDefaults() {
-      const response = await fetch("/api/brf01/latest-time-key");
-      const data = response.ok ? await response.json() : { timeKey: null };
-      const latest = data.timeKey ? toDateInputValue(data.timeKey) : "";
-      setDraftTimeKey(latest);
-      setAppliedFilters({
-        timeKey: latest,
-        entityGroups: [BRF01_ENTITY_GROUPS[0]],
-        dataSources: [BRF01_DATA_SOURCES[0]],
-      });
-    }
-    initDefaults();
+    const defaultTimeKey = toDateInputValue(getReportingPeriod().timeKey);
+    setDraftTimeKey(defaultTimeKey);
+    setAppliedFilters({
+      timeKey: defaultTimeKey,
+      entityGroups: [BRF01_ENTITY_GROUPS[0]],
+      dataSources: [BRF01_DATA_SOURCES[0]],
+    });
   }, []);
 
   const loadEntries = useCallback(async () => {
