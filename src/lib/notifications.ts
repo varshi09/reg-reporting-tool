@@ -85,3 +85,23 @@ export async function markAllRead(username: string): Promise<void> {
     )
   );
 }
+
+export async function clearNotification(id: number, username: string): Promise<void> {
+  await withConnection((connection) =>
+    connection.execute(
+      `DELETE FROM NOTIFICATIONS WHERE id = :id AND username = :username`,
+      { id, username },
+      { autoCommit: true }
+    )
+  );
+}
+
+export async function clearAllNotifications(username: string): Promise<void> {
+  await withConnection((connection) =>
+    connection.execute(
+      `DELETE FROM NOTIFICATIONS WHERE username = :username`,
+      { username },
+      { autoCommit: true }
+    )
+  );
+}
