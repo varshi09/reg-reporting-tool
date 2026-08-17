@@ -128,8 +128,14 @@ export default function ApprovalsPage() {
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-zinc-900">
+                      <p className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
                         {entry.fileName}
+                        <a
+                          href={`/api/upload-log/${entry.id}/download`}
+                          className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                        >
+                          Download
+                        </a>
                       </p>
                       <p className="mt-0.5 text-xs text-zinc-500">
                         {entry.targetLabel} · Time key {formatTimeKey(entry.timeKey)} ·
