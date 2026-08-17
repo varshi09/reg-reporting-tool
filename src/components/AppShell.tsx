@@ -16,11 +16,13 @@ import {
   IconMenu,
   IconLogout,
   IconChevronDown,
+  IconCheckCircle,
 } from "@/components/icons";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Home", icon: IconHome },
   { href: "/upload", label: "Upload Data", icon: IconCloudUpload },
+  { href: "/approvals", label: "Approvals", icon: IconCheckCircle },
   { href: "/reports", label: "Generate Report", icon: IconDocument },
   { href: "/validation", label: "Validation", icon: IconShieldCheck },
   { href: "/submissions", label: "Submissions", icon: IconSend },
