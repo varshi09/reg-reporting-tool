@@ -14,18 +14,20 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const procedureName = typeof body.procedureName === "string" ? body.procedureName.trim() : "";
+  const packageName =
+    typeof body.packageName === "string" && body.packageName.trim() ? body.packageName.trim() : null;
   const stage = body.stage as PipelineStageKey;
   const dependsOnDataset =
     typeof body.dependsOnDataset === "string" && body.dependsOnDataset.trim() ? body.dependsOnDataset.trim() : null;
 
-  if (!name) {
+  if (!procedureName) {
     return NextResponse.json({ error: "Enter a procedure name." }, { status: 400 });
   }
   if (!PIPELINE_STAGES.some((s) => s.key === stage)) {
     return NextResponse.json({ error: "Unknown stage." }, { status: 400 });
   }
 
-  const id = await createProcedure(name, stage, dependsOnDataset, username);
+  const id = await createProcedure(procedureName, packageName, stage, dependsOnDataset, username);
   return NextResponse.json({ id });
 }
