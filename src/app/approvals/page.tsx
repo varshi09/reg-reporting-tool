@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import AppShell from "@/components/AppShell";
+import { formatDateTime } from "@/lib/formatDateTime";
 
 type PendingEntry = {
   id: number;
@@ -140,7 +141,7 @@ export default function ApprovalsPage() {
                       <p className="mt-0.5 text-xs text-zinc-500">
                         {entry.targetLabel} · Time key {formatTimeKey(entry.timeKey)} ·
                         {" "}{entry.totalRows} rows · Uploaded by {entry.uploadedBy} on{" "}
-                        {new Date(entry.uploadedAt).toLocaleString()}
+                        {formatDateTime(entry.uploadedAt)}
                       </p>
                       {entry.previousFailureReasons && (
                         <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-800">

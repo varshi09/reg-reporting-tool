@@ -43,26 +43,46 @@ function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }
 
+const GST_OFFSET_MS = 4 * 60 * 60 * 1000; // UTC+4, fixed, no DST
+
+/**
+ * "Now" as GST wall-clock calendar fields, independent of whatever
+ * timezone the host machine (browser or server) actually runs in. Shifting
+ * the absolute instant by the fixed +4h offset and then reading it back
+ * with the UTC-suffixed getters yields GST's own year/month/day/hour
+ * without the read being re-interpreted through a third, local timezone -
+ * which matters because this same function decides the reporting-period
+ * boundary from both the browser (viewer's own clock) and the server.
+ */
+function gstNow(): { year: number; monthIndex: number } {
+  const shifted = new Date(Date.now() + GST_OFFSET_MS);
+  return { year: shifted.getUTCFullYear(), monthIndex: shifted.getUTCMonth() };
+}
+
 /**
  * The reporting period for the cycle running at `now` — i.e. the month-end
- * immediately before `now`'s month.
+ * immediately before `now`'s month. `now` defaults to the current instant
+ * read as GST, not the caller's local time.
  */
-export function getReportingPeriod(now: Date = new Date()): ReportingPeriod {
-  // Day 0 of the current month resolves to the last day of the previous
-  // month, which handles year rollover and month lengths for us.
-  const periodEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+export function getReportingPeriod(now?: { year: number; monthIndex: number }): ReportingPeriod {
+  const { year: nowYear, monthIndex: nowMonthIndex } = now ?? gstNow();
 
-  const year = periodEnd.getFullYear();
-  const monthIndex = periodEnd.getMonth(); // 0-based
+  // Day 0 of the current month resolves to the last day of the previous
+  // month, which handles year rollover and month lengths for us. Built in
+  // UTC so this doesn't get re-shifted by the host's own local timezone.
+  const periodEnd = new Date(Date.UTC(nowYear, nowMonthIndex, 0));
+
+  const year = periodEnd.getUTCFullYear();
+  const monthIndex = periodEnd.getUTCMonth(); // 0-based
   const monthNumber = monthIndex + 1; // 1-based
-  const day = periodEnd.getDate();
+  const day = periodEnd.getUTCDate();
 
   return {
     timeKey: `${year}${pad2(monthNumber)}${pad2(day)}`,
     monthPrefix: `${year}${pad2(monthNumber)}`,
     periodLabel: `${MONTH_NAMES[monthIndex]} ${year}`,
     periodDateLabel: `${day} ${SHORT_MONTH_NAMES[monthIndex]} ${year}`,
-    cycleLabel: `${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`,
+    cycleLabel: `${MONTH_NAMES[nowMonthIndex]} ${nowYear}`,
     isQuarterEnd: [3, 6, 9, 12].includes(monthNumber),
     isHalfYearEnd: [6, 12].includes(monthNumber),
     isYearEnd: monthNumber === 12,
