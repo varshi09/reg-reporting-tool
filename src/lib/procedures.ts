@@ -4,10 +4,15 @@ import { PIPELINE_STAGES, type PipelineStageKey, type PipelineStatus } from "@/l
 
 export type ProcedureDef = {
   id: number;
-  name: string;
+  procedureName: string;
+  packageName: string | null;
   stage: PipelineStageKey;
   dependsOnDataset: string | null;
 };
+
+export function fullProcedureName(p: { procedureName: string; packageName: string | null }): string {
+  return p.packageName ? `${p.packageName}.${p.procedureName}` : p.procedureName;
+}
 
 export type OverrideType = "PROCEED_WITHOUT_UPLOAD" | "USE_PREVIOUS_PERIOD";
 
@@ -45,10 +50,16 @@ async function isDatasetApproved(dataset: string, timeKey: string): Promise<bool
 }
 
 export async function getProceduresForPipeline(pipelineId: number): Promise<ProcedureDef[]> {
-  type Row = { ID: number; NAME: string; STAGE: string; DEPENDS_ON_DATASET: string | null };
+  type Row = {
+    ID: number;
+    PROCEDURE_NAME: string;
+    PACKAGE_NAME: string | null;
+    STAGE: string;
+    DEPENDS_ON_DATASET: string | null;
+  };
   const rows: Row[] = await withConnection(async (connection) => {
     const result = await connection.execute<Row>(
-      `SELECT p.id, p.name, p.stage, p.depends_on_dataset
+      `SELECT p.id, p.procedure_name, p.package_name, p.stage, p.depends_on_dataset
        FROM PROCEDURES p
        JOIN PIPELINE_PROCEDURES pp ON pp.procedure_id = p.id
        WHERE pp.pipeline_id = :pipelineId
@@ -59,7 +70,8 @@ export async function getProceduresForPipeline(pipelineId: number): Promise<Proc
   });
   return rows.map((r) => ({
     id: r.ID,
-    name: r.NAME,
+    procedureName: r.PROCEDURE_NAME,
+    packageName: r.PACKAGE_NAME,
     stage: r.STAGE as PipelineStageKey,
     dependsOnDataset: r.DEPENDS_ON_DATASET,
   }));
@@ -223,6 +235,7 @@ export async function overrideProcedure(
 export type RunHistoryEntry = {
   id: number;
   procedureName: string;
+  packageName: string | null;
   stage: PipelineStageKey;
   dependsOnDataset: string | null;
   status: PipelineStatus;
@@ -237,6 +250,7 @@ export type RunHistoryEntry = {
 type HistoryRow = {
   ID: number;
   PROCEDURE_NAME: string;
+  PACKAGE_NAME: string | null;
   STAGE: string;
   DEPENDS_ON_DATASET: string | null;
   STATUS: PipelineStatus;
@@ -252,7 +266,7 @@ type HistoryRow = {
 export async function getRunHistory(pipelineId: number, timeKey: string, limit = 200): Promise<RunHistoryEntry[]> {
   const rows: HistoryRow[] = await withConnection(async (connection) => {
     const result = await connection.execute<HistoryRow>(
-      `SELECT r.id, p.name AS procedure_name, p.stage, p.depends_on_dataset,
+      `SELECT r.id, p.procedure_name, p.package_name, p.stage, p.depends_on_dataset,
               r.status, r.override_type, r.start_time, r.end_time, r.note, r.updated_by, r.updated_at
        FROM PIPELINE_PROCEDURE_RUNS r
        JOIN PROCEDURES p ON p.id = r.procedure_id
@@ -266,6 +280,7 @@ export async function getRunHistory(pipelineId: number, timeKey: string, limit =
   return rows.map((r) => ({
     id: r.ID,
     procedureName: r.PROCEDURE_NAME,
+    packageName: r.PACKAGE_NAME,
     stage: r.STAGE as PipelineStageKey,
     dependsOnDataset: r.DEPENDS_ON_DATASET,
     status: r.STATUS,
@@ -279,16 +294,24 @@ export async function getRunHistory(pipelineId: number, timeKey: string, limit =
 }
 
 export async function createProcedure(
-  name: string,
+  procedureName: string,
+  packageName: string | null,
   stage: PipelineStageKey,
   dependsOnDataset: string | null,
   createdBy: string
 ): Promise<number> {
   return withConnection(async (connection) => {
     const result = await connection.execute<{ ID: number[] }>(
-      `INSERT INTO PROCEDURES (name, stage, depends_on_dataset, created_by)
-       VALUES (:name, :stage, :dependsOnDataset, :createdBy) RETURNING id INTO :id`,
-      { name, stage, dependsOnDataset, createdBy, id: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER } },
+      `INSERT INTO PROCEDURES (procedure_name, package_name, stage, depends_on_dataset, created_by)
+       VALUES (:procedureName, :packageName, :stage, :dependsOnDataset, :createdBy) RETURNING id INTO :id`,
+      {
+        procedureName,
+        packageName,
+        stage,
+        dependsOnDataset,
+        createdBy,
+        id: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
+      },
       { autoCommit: true }
     );
     return (result.outBinds as { id: number[] }).id[0];
