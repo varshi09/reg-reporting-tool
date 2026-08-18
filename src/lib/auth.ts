@@ -31,13 +31,17 @@ export async function login(
   }
 
   const token = randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
+  // Expiry is computed in SQL (LOCALTIMESTAMP + INTERVAL), not as a JS Date
+  // bind - a JS Date and LOCALTIMESTAMP can diverge depending on the host
+  // machine's OS timezone vs the DB session's, so "now" must always come
+  // from the DB itself for anything compared against another DB-generated
+  // "now" later (see validateSession below).
   await withConnection((connection) =>
     connection.execute(
       `INSERT INTO SESSIONS (token, username, expires_at)
-       VALUES (:token, :username, :expiresAt)`,
-      { token, username: user.USERNAME, expiresAt },
+       VALUES (:token, :username, LOCALTIMESTAMP + NUMTODSINTERVAL(:ttlHours, 'HOUR'))`,
+      { token, username: user.USERNAME, ttlHours: SESSION_TTL_MS / (60 * 60 * 1000) },
       { autoCommit: true }
     )
   );
@@ -50,7 +54,7 @@ export async function validateSession(token: string): Promise<string | null> {
   const row = await withConnection(async (connection) => {
     const result = await connection.execute<{ USERNAME: string }>(
       `SELECT username FROM SESSIONS
-       WHERE token = :token AND expires_at > SYSTIMESTAMP`,
+       WHERE token = :token AND expires_at > LOCALTIMESTAMP`,
       { token }
     );
     return result.rows?.[0] ?? null;
