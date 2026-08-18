@@ -116,7 +116,7 @@ type ActivityRow = {
 export async function getRecentActivity(
   pipelineId: number,
   timeKey: string,
-  limit = 20
+  limit = 100
 ): Promise<ActivityEntry[]> {
   const rows: ActivityRow[] = await withConnection(async (connection) => {
     const result = await connection.execute<ActivityRow>(
