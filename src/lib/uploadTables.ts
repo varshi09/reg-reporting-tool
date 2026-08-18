@@ -85,8 +85,8 @@ export const UPLOAD_TABLES: UploadTableConfig[] = [
     ],
   },
   {
-    key: "REF_BRF_INTERNAL_LINE_MAP",
-    label: "Internal Line Map",
+    key: "REF_FAB_GL_INTERNAL_LINE_MAP",
+    label: "FAB GL Internal Line Map",
     columns: [
       { column: "glsl", maxSize: 500 },
       { column: "from_glsl", maxSize: 500 },
