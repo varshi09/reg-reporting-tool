@@ -15,6 +15,7 @@ import {
   IconX,
   IconCalendar,
   IconPlus,
+  IconDocument,
 } from "@/components/icons";
 
 type Pipeline = { id: number; name: string; isActive: boolean; createdBy: string; createdAt: string };
@@ -65,6 +66,7 @@ function PipelineCard({
   const [stages, setStages] = useState<StageState[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showLog, setShowLog] = useState(false);
 
   const load = useCallback(async () => {
     const response = await fetch(`/api/pipelines/${pipeline.id}/status?timeKey=${timeKey}`);
@@ -111,15 +113,24 @@ function PipelineCard({
               {overallStyle.label}
             </span>
           </div>
-          {isAdmin && (
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => onUpdate(pipeline)}
+              onClick={() => setShowLog(true)}
               className="flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
             >
-              <IconPencil className="h-3.5 w-3.5" />
-              Update status
+              <IconDocument className="h-3.5 w-3.5" />
+              View log
             </button>
-          )}
+            {isAdmin && (
+              <button
+                onClick={() => onUpdate(pipeline)}
+                className="flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+              >
+                <IconPencil className="h-3.5 w-3.5" />
+                Update status
+              </button>
+            )}
+          </div>
         </div>
         <p className="mt-1 text-xs text-zinc-500">
           {cycleLabel} cycle · {completedCount} of {stages.length} stages complete · started by{" "}
@@ -250,6 +261,53 @@ function PipelineCard({
           )}
         </div>
       </div>
+
+      {showLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-lg bg-white p-5 shadow-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-zinc-900">Log — {pipeline.name}</p>
+                <p className="text-xs text-zinc-500">{cycleLabel} cycle</p>
+              </div>
+              <button
+                onClick={() => setShowLog(false)}
+                className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 flex-1 overflow-y-auto">
+              {activity.length === 0 ? (
+                <p className="text-sm text-zinc-500">No activity logged for this period yet.</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {activity.map((a) => {
+                    const style = STATUS_STYLE[a.status];
+                    const Icon = style.icon;
+                    return (
+                      <div key={a.id} className="flex items-start gap-2.5 border-b border-zinc-100 pb-3 last:border-b-0">
+                        <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${style.text}`} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-zinc-900">
+                            {PIPELINE_STAGES.find((s) => s.key === a.stage)?.label} —{" "}
+                            <span className={style.text}>{style.label.toLowerCase()}</span>
+                          </p>
+                          {a.note && <p className="mt-0.5 text-xs text-zinc-600">{a.note}</p>}
+                          <p className="mt-0.5 text-xs text-zinc-400">
+                            {fmtDateTime(a.updatedAt)} · by {a.updatedBy}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
