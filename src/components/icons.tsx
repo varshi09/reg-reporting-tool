@@ -199,3 +199,66 @@ export function IconChartBar(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function IconGitBranch(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="6" cy="5" r="2.2" />
+      <circle cx="6" cy="19" r="2.2" />
+      <circle cx="18" cy="9" r="2.2" />
+      <path d="M6 7.2V16.8M6 9c0 4 4 4 8 4h2.2" />
+    </svg>
+  );
+}
+
+export function IconPencil(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M4 20l0.7-3.6L15.4 5.7a1.8 1.8 0 0 1 2.6 0l0.3 0.3a1.8 1.8 0 0 1 0 2.6L7.6 19.3 4 20Z" />
+      <path d="M13.8 7.3l2.9 2.9" />
+    </svg>
+  );
+}
+
+export function IconCheck(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M5 12.5l4.5 4.5L19 7" />
+    </svg>
+  );
+}
+
+export function IconLoader(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" {...props}>
+      <path d="M12 3v3M12 18v3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M3 12h3M18 12h3M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" opacity={0.35} />
+      <path d="M12 3v3" />
+    </svg>
+  );
+}
+
+export function IconAlertTriangle(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M12 4.2 21 19.5H3Z" />
+      <path d="M12 10v4.2" />
+      <circle cx="12" cy="16.9" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function IconCircleDashed(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeDasharray="3 3" {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+    </svg>
+  );
+}
+
+export function IconPlus(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" {...props}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
