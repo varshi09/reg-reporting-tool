@@ -7,6 +7,7 @@ import { IconFolder } from "@/components/icons";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { UPLOAD_TABLES } from "@/lib/uploadTables";
 import { getReportingPeriod } from "@/lib/reportingPeriod";
+import { formatDateTime } from "@/lib/formatDateTime";
 import type { ValidationIssue } from "@/lib/uploadParser";
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -495,7 +496,7 @@ export default function UploadPage() {
                       <td className="py-2 pr-4">{entry.TIME_KEY}</td>
                       <td className="py-2 pr-4">{entry.UPLOADED_BY}</td>
                       <td className="py-2 pr-4">
-                        {new Date(entry.UPLOADED_AT).toLocaleString()}
+                        {formatDateTime(entry.UPLOADED_AT)}
                       </td>
                       <td className="py-2 pr-4">{entry.TOTAL_ROWS}</td>
                       <td className="py-2 pr-4">{entry.INSERTED_COUNT}</td>

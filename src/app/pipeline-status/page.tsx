@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import AppShell from "@/components/AppShell";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { getReportingPeriod } from "@/lib/reportingPeriod";
+import { formatDateTime as fmtDateTime } from "@/lib/formatDateTime";
 import { PIPELINE_STAGES, PIPELINE_STATUSES, type PipelineStageKey, type PipelineStatus } from "@/lib/pipelineStages";
 import {
   IconGitBranch,
@@ -71,16 +72,6 @@ function overallStatus(statuses: PipelineStatus[]): PipelineStatus {
   if (statuses.some((s) => s === "IN_PROGRESS")) return "IN_PROGRESS";
   if (statuses.length > 0 && statuses.every((s) => s === "COMPLETED")) return "COMPLETED";
   return "PENDING";
-}
-
-function fmtDateTime(value: string | null): string {
-  if (!value) return "—";
-  return new Date(value).toLocaleString(undefined, {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function PipelineCard({

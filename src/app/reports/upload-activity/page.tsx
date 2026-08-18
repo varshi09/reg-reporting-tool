@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import AppShell from "@/components/AppShell";
+import { formatDateTime } from "@/lib/formatDateTime";
 
 type LogEntry = {
   ID: number;
@@ -195,7 +196,7 @@ export default function ReportsPage() {
                       <td className="py-2 pr-4">{formatTimeKey(entry.TIME_KEY)}</td>
                       <td className="py-2 pr-4">{entry.UPLOADED_BY}</td>
                       <td className="py-2 pr-4">
-                        {new Date(entry.UPLOADED_AT).toLocaleString()}
+                        {formatDateTime(entry.UPLOADED_AT)}
                       </td>
                       <td className="py-2 pr-4">{entry.TOTAL_ROWS}</td>
                       <td className="py-2 pr-4">{entry.INSERTED_COUNT}</td>

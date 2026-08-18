@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import AppShell from "@/components/AppShell";
 import { useRequireAuth } from "@/lib/useRequireAuth";
+import { formatDateTime } from "@/lib/formatDateTime";
 
 type Period = {
   reportKey: string;
@@ -101,7 +102,11 @@ export default function SubmissionsPage() {
     const rowKey = `${period.reportKey}|${period.timeKey}`;
     setSubmittingKey(rowKey);
     try {
-      const submittedAt = submittedAtInput ? new Date(submittedAtInput).toISOString() : undefined;
+      // Sent as-is (no toISOString conversion) - the raw datetime-local
+      // value has no timezone of its own, and converting it through a JS
+      // Date here would silently reinterpret it via the browser's own
+      // local timezone before the server ever sees it. The API parses this
+      // string directly as GST wall-clock via TO_TIMESTAMP.
       const response = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -109,7 +114,7 @@ export default function SubmissionsPage() {
           reportKey: period.reportKey,
           timeKey: period.timeKey,
           submittedBy: username,
-          submittedAt,
+          submittedAt: submittedAtInput || undefined,
         }),
       });
       if (response.ok) {
@@ -380,11 +385,7 @@ export default function SubmissionsPage() {
                           )}
                         </td>
                         <td className="py-2 pr-4">{period.submittedBy ?? "—"}</td>
-                        <td className="py-2 pr-4">
-                          {period.submittedAt
-                            ? new Date(period.submittedAt).toLocaleString()
-                            : "—"}
-                        </td>
+                        <td className="py-2 pr-4">{formatDateTime(period.submittedAt)}</td>
                         <td className="py-2">
                           {!period.submitted && (
                             <button

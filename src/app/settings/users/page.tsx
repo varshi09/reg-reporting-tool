@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
+import { formatDateTime } from "@/lib/formatDateTime";
 
 type UserRow = { username: string; createdAt: string; isAdmin: boolean };
 
@@ -124,7 +125,7 @@ export default function UsersPage() {
                         </div>
                       </td>
                       <td className="py-2 pr-4">
-                        {new Date(u.createdAt).toLocaleString()}
+                        {formatDateTime(u.createdAt)}
                       </td>
                       <td className="py-2">
                         {confirmingDelete === u.username ? (

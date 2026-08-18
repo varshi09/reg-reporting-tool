@@ -11,6 +11,21 @@ oracledb.fetchAsBuffer = [oracledb.BLOB];
 
 let pool: oracledb.Pool | null = null;
 
+// CBUAE reporting is UAE-based, so every timestamp the app generates or
+// compares against must be Gulf Standard Time - not whatever timezone the
+// host machine's OS happens to be set to. SYSTIMESTAMP reflects the DB
+// SERVER's OS timezone (which may not be GST at all), while LOCALTIMESTAMP
+// reflects the SESSION timezone - so every "now" in this app must use
+// LOCALTIMESTAMP, never SYSTIMESTAMP, and the session timezone is forced
+// here rather than left to whatever the connecting client's OS inherits.
+function sessionCallback(
+  connection: oracledb.Connection,
+  requestedTag: string | undefined,
+  callback: (err?: Error) => void
+) {
+  connection.execute(`ALTER SESSION SET TIME_ZONE = '+04:00'`, (err: Error | undefined) => callback(err ?? undefined));
+}
+
 async function getPool() {
   if (!pool) {
     pool = await oracledb.createPool({
@@ -19,6 +34,7 @@ async function getPool() {
       connectString: process.env.ORACLE_CONNECT_STRING,
       poolMin: 1,
       poolMax: 5,
+      sessionCallback,
     });
   }
   return pool;

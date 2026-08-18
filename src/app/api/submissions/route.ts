@@ -136,17 +136,24 @@ export async function POST(request: Request) {
   }
 
   // Defaults to now, but the user can back-date this to when the report was
-  // actually filed with CBUAE (e.g. logging a submission made earlier).
-  const submittedAt = submittedAtInput ? new Date(submittedAtInput) : new Date();
-  if (Number.isNaN(submittedAt.getTime())) {
+  // actually filed with CBUAE (e.g. logging a submission made earlier). The
+  // datetime-local input has no timezone of its own - it's bound as a raw
+  // string and parsed by Oracle directly (TO_TIMESTAMP) as GST wall-clock,
+  // rather than going through a JS Date first, which would silently
+  // reinterpret it using the server process's own OS timezone instead of
+  // GST on a host machine set to a different zone.
+  if (submittedAtInput && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(submittedAtInput)) {
     return NextResponse.json({ error: "Invalid submittedAt value." }, { status: 400 });
   }
 
   await withConnection(async (connection) => {
     await connection.execute(
       `INSERT INTO REPORT_SUBMISSIONS (report_key, time_key, submitted_by, submitted_at)
-       VALUES (:reportKey, :timeKey, :submittedBy, :submittedAt)`,
-      { reportKey, timeKey, submittedBy, submittedAt },
+       VALUES (:reportKey, :timeKey, :submittedBy,
+               ${submittedAtInput ? `TO_TIMESTAMP(:submittedAt, 'YYYY-MM-DD"T"HH24:MI')` : "LOCALTIMESTAMP"})`,
+      submittedAtInput
+        ? { reportKey, timeKey, submittedBy, submittedAt: submittedAtInput }
+        : { reportKey, timeKey, submittedBy },
       { autoCommit: true }
     );
   });
