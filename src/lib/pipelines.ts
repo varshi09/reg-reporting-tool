@@ -7,6 +7,10 @@ export type Pipeline = {
   isActive: boolean;
   createdBy: string;
   createdAt: string;
+  groupCount?: number;
+  procCount?: number;
+  isRunning?: boolean;
+  needsAttention?: boolean;
 };
 
 type PipelineRow = {
@@ -15,15 +19,22 @@ type PipelineRow = {
   IS_ACTIVE: number;
   CREATED_BY: string;
   CREATED_AT: string;
+  GROUP_COUNT: number;
+  PROC_COUNT: number;
 };
 
 export async function getActivePipelines(): Promise<Pipeline[]> {
   const rows: PipelineRow[] = await withConnection(async (connection) => {
     const result = await connection.execute<PipelineRow>(
-      `SELECT id, name, is_active, created_by, created_at
-       FROM PIPELINES
-       WHERE is_active = 1
-       ORDER BY id`
+      `SELECT p.id, p.name, p.is_active, p.created_by, p.created_at,
+              COUNT(DISTINCT pg.id) AS group_count,
+              COUNT(pp.id) AS proc_count
+       FROM PIPELINES p
+       LEFT JOIN PIPELINE_GROUPS pg ON pg.pipeline_id = p.id
+       LEFT JOIN PIPELINE_PROCEDURES pp ON pp.pipeline_id = p.id AND pp.group_id IS NOT NULL
+       WHERE p.is_active = 1
+       GROUP BY p.id, p.name, p.is_active, p.created_by, p.created_at
+       ORDER BY p.id`
     );
     return result.rows ?? [];
   });
@@ -33,7 +44,42 @@ export async function getActivePipelines(): Promise<Pipeline[]> {
     isActive: r.IS_ACTIVE === 1,
     createdBy: r.CREATED_BY,
     createdAt: r.CREATED_AT,
+    groupCount: Number(r.GROUP_COUNT),
+    procCount: Number(r.PROC_COUNT),
   }));
+}
+
+/** Adds isRunning / needsAttention flags for the current period, for the builder list's stat cards. */
+export async function withCurrentRunFlags(pipelines: Pipeline[], timeKey: string): Promise<Pipeline[]> {
+  type FlagRow = { PIPELINE_ID: number; STATUS: string };
+  const rows: FlagRow[] = await withConnection(async (connection) => {
+    const result = await connection.execute<FlagRow>(
+      `SELECT pipeline_id, status FROM (
+         SELECT pipeline_id, procedure_id, status,
+                ROW_NUMBER() OVER (PARTITION BY pipeline_id, procedure_id ORDER BY updated_at DESC NULLS LAST) AS rn
+         FROM PIPELINE_PROCEDURE_RUNS
+         WHERE time_key = :timeKey
+       ) WHERE rn = 1`,
+      { timeKey }
+    );
+    return result.rows ?? [];
+  });
+
+  const byPipeline = new Map<number, string[]>();
+  for (const r of rows) {
+    const list = byPipeline.get(r.PIPELINE_ID) ?? [];
+    list.push(r.STATUS);
+    byPipeline.set(r.PIPELINE_ID, list);
+  }
+
+  return pipelines.map((p) => {
+    const statuses = byPipeline.get(p.id) ?? [];
+    return {
+      ...p,
+      isRunning: statuses.includes("IN_PROGRESS"),
+      needsAttention: statuses.includes("FAILED") || statuses.includes("AWAITING_INPUT"),
+    };
+  });
 }
 
 export async function createPipeline(name: string, createdBy: string): Promise<number> {

@@ -1,15 +1,21 @@
 import { NextResponse } from "next/server";
 import { getCurrentUsername } from "@/lib/auth";
 import { isAdmin } from "@/lib/roles";
-import { getActivePipelines, createPipeline } from "@/lib/pipelines";
+import { getActivePipelines, createPipeline, withCurrentRunFlags } from "@/lib/pipelines";
 
-export async function GET() {
+export async function GET(request: Request) {
   const username = await getCurrentUsername();
   if (!username) {
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const pipelines = await getActivePipelines();
+  const { searchParams } = new URL(request.url);
+  const timeKey = searchParams.get("timeKey");
+
+  let pipelines = await getActivePipelines();
+  if (timeKey) {
+    pipelines = await withCurrentRunFlags(pipelines, timeKey);
+  }
   return NextResponse.json({ pipelines });
 }
 
