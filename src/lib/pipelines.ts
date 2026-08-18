@@ -7,6 +7,8 @@ export type Pipeline = {
   isActive: boolean;
   createdBy: string;
   createdAt: string;
+  groupCount?: number;
+  procCount?: number;
 };
 
 type PipelineRow = {
@@ -15,15 +17,22 @@ type PipelineRow = {
   IS_ACTIVE: number;
   CREATED_BY: string;
   CREATED_AT: string;
+  GROUP_COUNT: number;
+  PROC_COUNT: number;
 };
 
 export async function getActivePipelines(): Promise<Pipeline[]> {
   const rows: PipelineRow[] = await withConnection(async (connection) => {
     const result = await connection.execute<PipelineRow>(
-      `SELECT id, name, is_active, created_by, created_at
-       FROM PIPELINES
-       WHERE is_active = 1
-       ORDER BY id`
+      `SELECT p.id, p.name, p.is_active, p.created_by, p.created_at,
+              COUNT(DISTINCT pg.id) AS group_count,
+              COUNT(pp.id) AS proc_count
+       FROM PIPELINES p
+       LEFT JOIN PIPELINE_GROUPS pg ON pg.pipeline_id = p.id
+       LEFT JOIN PIPELINE_PROCEDURES pp ON pp.pipeline_id = p.id AND pp.group_id IS NOT NULL
+       WHERE p.is_active = 1
+       GROUP BY p.id, p.name, p.is_active, p.created_by, p.created_at
+       ORDER BY p.id`
     );
     return result.rows ?? [];
   });
@@ -33,6 +42,8 @@ export async function getActivePipelines(): Promise<Pipeline[]> {
     isActive: r.IS_ACTIVE === 1,
     createdBy: r.CREATED_BY,
     createdAt: r.CREATED_AT,
+    groupCount: Number(r.GROUP_COUNT),
+    procCount: Number(r.PROC_COUNT),
   }));
 }
 
