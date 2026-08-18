@@ -19,7 +19,13 @@ import {
 } from "@/components/icons";
 
 type Pipeline = { id: number; name: string; isActive: boolean; createdBy: string; createdAt: string };
-type ProcedureDef = { id: number; name: string; stage: PipelineStageKey; dependsOnDataset: string | null };
+type ProcedureDef = {
+  id: number;
+  procedureName: string;
+  packageName: string | null;
+  stage: PipelineStageKey;
+  dependsOnDataset: string | null;
+};
 type ProcedureState = {
   procedure: ProcedureDef;
   status: PipelineStatus;
@@ -35,6 +41,7 @@ type ProcedureState = {
 type RunHistoryEntry = {
   id: number;
   procedureName: string;
+  packageName: string | null;
   stage: PipelineStageKey;
   dependsOnDataset: string | null;
   status: PipelineStatus;
@@ -45,6 +52,10 @@ type RunHistoryEntry = {
   updatedBy: string;
   updatedAt: string;
 };
+
+function fullProcedureName(p: { procedureName: string; packageName: string | null }): string {
+  return p.packageName ? `${p.packageName}.${p.procedureName}` : p.procedureName;
+}
 
 const STATUS_STYLE: Record<PipelineStatus, { text: string; bg: string; border: string; icon: typeof IconCheck; label: string }> = {
   PENDING: { text: "text-zinc-400", bg: "bg-zinc-100", border: "border-zinc-300", icon: IconCircleDashed, label: "Queued" },
@@ -220,7 +231,7 @@ function PipelineCard({
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3">
             <span className={`flex items-center gap-1.5 text-xs ${STATUS_STYLE[flagged.status].text}`}>
               <IconAlertTriangle className="h-3.5 w-3.5" />
-              {flagged.procedure.name} ({PIPELINE_STAGES.find((s) => s.key === flagged.procedure.stage)?.label}) needs
+              {fullProcedureName(flagged.procedure)} ({PIPELINE_STAGES.find((s) => s.key === flagged.procedure.stage)?.label}) needs
               attention
               {flagged.isBlocked ? ` — ${flagged.blockedReason}` : flagged.note ? ` — ${flagged.note}` : ""}
             </span>
@@ -261,7 +272,7 @@ function PipelineCard({
             <div className="flex flex-col gap-1.5 text-xs">
               <div className="flex justify-between">
                 <span className="text-zinc-500">Procedure</span>
-                <span className="font-medium text-zinc-900">{currentProc.procedure.name}</span>
+                <span className="font-medium text-zinc-900">{fullProcedureName(currentProc.procedure)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-500">Stage</span>
@@ -330,6 +341,7 @@ function PipelineCard({
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-zinc-200 text-zinc-500">
+                      <th className="py-2 pr-3 font-medium">Package</th>
                       <th className="py-2 pr-3 font-medium">Procedure</th>
                       <th className="py-2 pr-3 font-medium">Stage</th>
                       <th className="py-2 pr-3 font-medium">Depends on</th>
@@ -345,6 +357,7 @@ function PipelineCard({
                       const style = STATUS_STYLE[h.status];
                       return (
                         <tr key={h.id} className="border-b border-zinc-100 align-top text-zinc-700">
+                          <td className="py-2 pr-3 text-zinc-500">{h.packageName ?? "—"}</td>
                           <td className="py-2 pr-3 font-medium text-zinc-900">{h.procedureName}</td>
                           <td className="py-2 pr-3">{PIPELINE_STAGES.find((s) => s.key === h.stage)?.label}</td>
                           <td className="py-2 pr-3 text-zinc-500">{h.dependsOnDataset ?? "—"}</td>
@@ -399,7 +412,7 @@ function PipelineCard({
                       className={`rounded-md border px-3 py-2.5 ${isAttention ? "border-amber-200 bg-amber-50" : "border-zinc-200 bg-white"}`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-medium text-zinc-900">{st.procedure.name}</span>
+                        <span className="text-xs font-medium text-zinc-900">{fullProcedureName(st.procedure)}</span>
                         <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${style.bg} ${style.text}`}>
                           <Icon className={`h-3 w-3 ${st.status === "IN_PROGRESS" ? "animate-spin" : ""}`} />
                           {style.label}
@@ -616,7 +629,7 @@ export default function PipelineStatusPage() {
                 >
                   {updateProcedures.map((s) => (
                     <option key={s.procedure.id} value={s.procedure.id}>
-                      {s.procedure.name} ({PIPELINE_STAGES.find((st) => st.key === s.procedure.stage)?.label})
+                      {fullProcedureName(s.procedure)} ({PIPELINE_STAGES.find((st) => st.key === s.procedure.stage)?.label})
                     </option>
                   ))}
                 </select>
