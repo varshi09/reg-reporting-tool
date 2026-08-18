@@ -241,9 +241,7 @@ function PipelineCard({
                       <p className="text-xs text-zinc-900">
                         {PIPELINE_STAGES.find((s) => s.key === a.stage)?.label} — {style.label.toLowerCase()}
                       </p>
-                      <p className="text-[10.5px] text-zinc-400">
-                        {fmtDateTime(a.updatedAt)} · by {a.updatedBy}
-                      </p>
+                      <p className="text-[10.5px] text-zinc-400">{fmtDateTime(a.updatedAt)}</p>
                     </div>
                   </div>
                 );
