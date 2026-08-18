@@ -2,15 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUsername } from "@/lib/auth";
 import { isAdmin } from "@/lib/roles";
 import { createProcedure } from "@/lib/procedures";
-import { getCatalogProcedures } from "@/lib/pipelineBuilder";
 import { PIPELINE_STAGES, type PipelineStageKey } from "@/lib/pipelineStages";
-
-export async function GET() {
-  const username = await getCurrentUsername();
-  if (!username) return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
-  const procedures = await getCatalogProcedures();
-  return NextResponse.json(procedures);
-}
 
 export async function POST(request: Request) {
   const username = await getCurrentUsername();
