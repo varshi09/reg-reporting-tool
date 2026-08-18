@@ -19,6 +19,7 @@ import {
   IconChevronDown,
   IconCheckCircle,
   IconX,
+  IconGitBranch,
 } from "@/components/icons";
 
 const NAV_ITEMS = [
@@ -26,6 +27,7 @@ const NAV_ITEMS = [
   { href: "/upload", label: "Upload Data", icon: IconCloudUpload },
   { href: "/approvals", label: "Approvals", icon: IconCheckCircle },
   { href: "/reports", label: "Generate Report", icon: IconDocument },
+  { href: "/pipeline-status", label: "Pipeline Status", icon: IconGitBranch },
   { href: "/validation", label: "Validation", icon: IconShieldCheck },
   { href: "/submissions", label: "Submissions", icon: IconSend },
   { href: "/report-library", label: "Report Library", icon: IconFolder },
