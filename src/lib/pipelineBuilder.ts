@@ -1,5 +1,6 @@
 import oracledb from "oracledb";
 import { withConnection } from "@/lib/db";
+import type { PipelineStatus } from "@/lib/pipelineStages";
 
 export type ExecMode = "SEQUENTIAL" | "PARALLEL";
 
@@ -287,4 +288,313 @@ export async function reorderProceduresInGroup(
     }
     await connection.commit();
   });
+}
+
+// ─── Run-state ───────────────────────────────────────────────────────────────
+// Rolls PIPELINE_PROCEDURE_RUNS up through the user-defined groups, so the
+// status page's stage dots always reflect whatever groups the user actually
+// built in the canvas - never a fixed/hardcoded stage list.
+
+export type ProcRunState = {
+  proc: GroupProcedure;
+  status: PipelineStatus;
+  isBlocked: boolean;
+  blockedReason: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  note: string | null;
+  overrideType: string | null;
+  updatedBy: string | null;
+};
+
+export type GroupRunState = {
+  group: { id: number; name: string; sortOrder: number; execMode: ExecMode };
+  procedures: ProcRunState[];
+  groupStatus: PipelineStatus;
+};
+
+export type PipelineRunState = {
+  pipelineId: number;
+  pipelineName: string;
+  timeKey: string;
+  groups: GroupRunState[];
+  overallStatus: PipelineStatus;
+  completedGroups: number;
+  totalGroups: number;
+  completedProcs: number;
+  totalProcs: number;
+};
+
+function computeGroupStatus(statuses: PipelineStatus[]): PipelineStatus {
+  if (statuses.length === 0) return "PENDING";
+  if (statuses.some((s) => s === "FAILED")) return "FAILED";
+  if (statuses.some((s) => s === "AWAITING_INPUT")) return "AWAITING_INPUT";
+  if (statuses.some((s) => s === "IN_PROGRESS")) return "IN_PROGRESS";
+  if (statuses.every((s) => s === "COMPLETED")) return "COMPLETED";
+  return "PENDING";
+}
+
+export async function getPipelineRunState(
+  pipelineId: number,
+  timeKey: string
+): Promise<PipelineRunState | null> {
+  const structure = await getPipelineStructure(pipelineId);
+  if (!structure) return null;
+
+  type RunRow = {
+    PROCEDURE_ID: number;
+    STATUS: string;
+    OVERRIDE_TYPE: string | null;
+    START_TIME: string | null;
+    END_TIME: string | null;
+    NOTE: string | null;
+    UPDATED_BY: string | null;
+  };
+
+  const runs = await withConnection(async (conn) => {
+    const r = await conn.execute<RunRow>(
+      `SELECT procedure_id, status, override_type, start_time, end_time, note, updated_by
+       FROM (
+         SELECT procedure_id, status, override_type, start_time, end_time, note, updated_by,
+                ROW_NUMBER() OVER (PARTITION BY procedure_id ORDER BY updated_at DESC NULLS LAST) AS rn
+         FROM PIPELINE_PROCEDURE_RUNS
+         WHERE pipeline_id = :pipelineId AND time_key = :timeKey
+       ) WHERE rn = 1`,
+      { pipelineId, timeKey }
+    );
+    return r.rows ?? [];
+  });
+  const runMap = new Map(runs.map((r) => [r.PROCEDURE_ID, r]));
+
+  const datasets = [
+    ...new Set(
+      structure.groups
+        .flatMap((g) => g.procedures)
+        .map((p) => p.dependsOnDataset)
+        .filter((d): d is string => d !== null)
+    ),
+  ];
+
+  const approvedSet =
+    datasets.length > 0
+      ? await withConnection(async (conn) => {
+          const placeholders = datasets.map((_, i) => `:d${i}`).join(",");
+          const binds: Record<string, unknown> = { timeKey };
+          datasets.forEach((d, i) => { binds[`d${i}`] = d; });
+          const r = await conn.execute<{ TARGET_TABLE: string }>(
+            `SELECT DISTINCT target_table FROM UPLOAD_LOG
+             WHERE target_table IN (${placeholders}) AND time_key = :timeKey AND status = 'APPROVED'`,
+            binds
+          );
+          return new Set((r.rows ?? []).map((row) => row.TARGET_TABLE));
+        })
+      : new Set<string>();
+
+  const groups: GroupRunState[] = structure.groups.map((group) => {
+    const procedures: ProcRunState[] = group.procedures.map((proc) => {
+      const run = runMap.get(proc.procedureId);
+      let isBlocked = false;
+      let blockedReason: string | null = null;
+
+      if (proc.dependsOnDataset && !run?.OVERRIDE_TYPE) {
+        if (!approvedSet.has(proc.dependsOnDataset)) {
+          isBlocked = true;
+          blockedReason = `Waiting on an approved upload for ${proc.dependsOnDataset}`;
+        }
+      }
+
+      const status: PipelineStatus = isBlocked
+        ? "AWAITING_INPUT"
+        : ((run?.STATUS as PipelineStatus) ?? "PENDING");
+
+      return {
+        proc,
+        status,
+        isBlocked,
+        blockedReason,
+        startTime: run?.START_TIME ?? null,
+        endTime: run?.END_TIME ?? null,
+        note: run?.NOTE ?? null,
+        overrideType: run?.OVERRIDE_TYPE ?? null,
+        updatedBy: run?.UPDATED_BY ?? null,
+      };
+    });
+
+    return {
+      group: { id: group.id, name: group.name, sortOrder: group.sortOrder, execMode: group.execMode },
+      procedures,
+      groupStatus: computeGroupStatus(procedures.map((p) => p.status)),
+    };
+  });
+
+  const completedGroups = groups.filter((g) => g.groupStatus === "COMPLETED").length;
+  const allProcs = groups.flatMap((g) => g.procedures);
+
+  return {
+    pipelineId: structure.pipelineId,
+    pipelineName: structure.pipelineName,
+    timeKey,
+    groups,
+    overallStatus: computeGroupStatus(groups.map((g) => g.groupStatus)),
+    completedGroups,
+    totalGroups: groups.length,
+    completedProcs: allProcs.filter((p) => p.status === "COMPLETED").length,
+    totalProcs: allProcs.length,
+  };
+}
+
+export async function getAllPipelinesRunState(timeKey: string): Promise<PipelineRunState[]> {
+  type PipelineRow = { ID: number };
+  const pipelines = await withConnection(async (conn) => {
+    const r = await conn.execute<PipelineRow>(`SELECT id FROM PIPELINES ORDER BY id`);
+    return r.rows ?? [];
+  });
+  const states = await Promise.all(pipelines.map((p) => getPipelineRunState(p.ID, timeKey)));
+  return states.filter((s): s is PipelineRunState => s !== null);
+}
+
+// ─── Execution ──────────────────────────────────────────────────────────────
+
+async function runGroupProcedure(
+  pipelineId: number,
+  proc: GroupProcedure,
+  timeKey: string,
+  triggeredBy: string
+): Promise<{ status: "COMPLETED" | "FAILED"; error?: string }> {
+  const startedAt: Date = await withConnection(async (conn) => {
+    const r = await conn.execute<{ ST: Date[] }>(
+      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, updated_by)
+       VALUES (:pipelineId, :procedureId, :timeKey, 'IN_PROGRESS', LOCALTIMESTAMP, :updatedBy)
+       RETURNING start_time INTO :st`,
+      {
+        pipelineId,
+        procedureId: proc.procedureId,
+        timeKey,
+        updatedBy: triggeredBy,
+        st: { dir: oracledb.BIND_OUT, type: oracledb.DB_TYPE_TIMESTAMP },
+      },
+      { autoCommit: true }
+    );
+    return (r.outBinds as { st: Date[] }).st[0];
+  });
+
+  const target = proc.packageName
+    ? `${proc.packageName}.${proc.procedureName}`
+    : proc.procedureName;
+  const args: string[] = [];
+  if (proc.takesDateParam) args.push("v_date");
+  if (proc.takesScopeParam) args.push("'ALL'");
+  const call = args.length ? `${target}(${args.join(", ")});` : `${target};`;
+  const block = `DECLARE v_date VARCHAR2(20) := TO_CHAR(TO_DATE(:timeKey, 'YYYYMMDD'), 'DD-MON-YYYY'); BEGIN ${call} END;`;
+
+  try {
+    await withConnection((conn) => conn.execute(block, { timeKey }, { autoCommit: true }));
+    await withConnection((conn) =>
+      conn.execute(
+        `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, end_time, updated_by)
+         VALUES (:pipelineId, :procedureId, :timeKey, 'COMPLETED', :startedAt, LOCALTIMESTAMP, :updatedBy)`,
+        { pipelineId, procedureId: proc.procedureId, timeKey, startedAt, updatedBy: triggeredBy },
+        { autoCommit: true }
+      )
+    );
+    return { status: "COMPLETED" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await withConnection((conn) =>
+      conn.execute(
+        `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, end_time, note, updated_by)
+         VALUES (:pipelineId, :procedureId, :timeKey, 'FAILED', :startedAt, LOCALTIMESTAMP, :note, :updatedBy)`,
+        {
+          pipelineId, procedureId: proc.procedureId, timeKey,
+          startedAt, note: message.slice(0, 1000), updatedBy: triggeredBy,
+        },
+        { autoCommit: true }
+      )
+    );
+    return { status: "FAILED", error: message };
+  }
+}
+
+export async function runNextInPipeline(
+  pipelineId: number,
+  timeKey: string,
+  triggeredBy: string
+): Promise<{ ran: string[]; blocked: string[]; failed: string[] }> {
+  const state = await getPipelineRunState(pipelineId, timeKey);
+  if (!state || state.groups.length === 0) return { ran: [], blocked: [], failed: [] };
+
+  const targetGroup = state.groups.find((g) => g.groupStatus !== "COMPLETED");
+  if (!targetGroup) return { ran: [], blocked: [], failed: [] };
+
+  const ran: string[] = [];
+  const blocked: string[] = [];
+  const failed: string[] = [];
+
+  const eligible = targetGroup.procedures.filter(
+    (p) => p.status !== "COMPLETED" && p.status !== "IN_PROGRESS" && !p.isBlocked
+  );
+  targetGroup.procedures.filter((p) => p.isBlocked).forEach((p) => blocked.push(p.proc.procedureName));
+
+  if (targetGroup.group.execMode === "PARALLEL") {
+    const results = await Promise.all(
+      eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy))
+    );
+    eligible.forEach((p, i) => {
+      if (results[i].status === "COMPLETED") ran.push(p.proc.procedureName);
+      else failed.push(p.proc.procedureName);
+    });
+  } else {
+    const next = eligible[0];
+    if (next) {
+      const result = await runGroupProcedure(pipelineId, next.proc, timeKey, triggeredBy);
+      if (result.status === "COMPLETED") ran.push(next.proc.procedureName);
+      else failed.push(next.proc.procedureName);
+    }
+  }
+
+  return { ran, blocked, failed };
+}
+
+export async function runAllInPipeline(
+  pipelineId: number,
+  timeKey: string,
+  triggeredBy: string
+): Promise<{ ran: string[]; blocked: string[]; failed: string[] }> {
+  const structure = await getPipelineStructure(pipelineId);
+  if (!structure) return { ran: [], blocked: [], failed: [] };
+
+  const allRan: string[] = [];
+  const allBlocked: string[] = [];
+  const allFailed: string[] = [];
+
+  for (const group of structure.groups) {
+    const freshState = await getPipelineRunState(pipelineId, timeKey);
+    if (!freshState) break;
+
+    const groupState = freshState.groups.find((g) => g.group.id === group.id);
+    if (!groupState || groupState.groupStatus === "COMPLETED") continue;
+
+    const eligible = groupState.procedures.filter(
+      (p) => p.status !== "COMPLETED" && p.status !== "IN_PROGRESS" && !p.isBlocked
+    );
+    groupState.procedures.filter((p) => p.isBlocked).forEach((p) => allBlocked.push(p.proc.procedureName));
+
+    if (group.execMode === "PARALLEL") {
+      const results = await Promise.all(
+        eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy))
+      );
+      eligible.forEach((p, i) => {
+        if (results[i].status === "COMPLETED") allRan.push(p.proc.procedureName);
+        else allFailed.push(p.proc.procedureName);
+      });
+    } else {
+      for (const p of eligible) {
+        const result = await runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy);
+        if (result.status === "COMPLETED") allRan.push(p.proc.procedureName);
+        else { allFailed.push(p.proc.procedureName); break; }
+      }
+    }
+  }
+
+  return { ran: allRan, blocked: allBlocked, failed: allFailed };
 }
