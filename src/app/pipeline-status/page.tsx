@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import AppShell from "@/components/AppShell";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { getReportingPeriod } from "@/lib/reportingPeriod";
-import { PIPELINE_STAGES, PIPELINE_STATUSES, type PipelineStatus } from "@/lib/pipelineStages";
+import { PIPELINE_STAGES, PIPELINE_STATUSES, type PipelineStageKey, type PipelineStatus } from "@/lib/pipelineStages";
 import {
   IconGitBranch,
   IconPencil,
@@ -19,8 +19,32 @@ import {
 } from "@/components/icons";
 
 type Pipeline = { id: number; name: string; isActive: boolean; createdBy: string; createdAt: string };
-type StageState = { stage: string; status: PipelineStatus; note: string | null; updatedBy: string | null; updatedAt: string | null };
-type ActivityEntry = { id: number; stage: string; status: PipelineStatus; note: string | null; updatedBy: string; updatedAt: string };
+type ProcedureDef = { id: number; name: string; stage: PipelineStageKey; dependsOnDataset: string | null };
+type ProcedureState = {
+  procedure: ProcedureDef;
+  status: PipelineStatus;
+  isBlocked: boolean;
+  blockedReason: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  note: string | null;
+  overrideType: "PROCEED_WITHOUT_UPLOAD" | "USE_PREVIOUS_PERIOD" | null;
+  updatedBy: string | null;
+  updatedAt: string | null;
+};
+type RunHistoryEntry = {
+  id: number;
+  procedureName: string;
+  stage: PipelineStageKey;
+  dependsOnDataset: string | null;
+  status: PipelineStatus;
+  overrideType: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  note: string | null;
+  updatedBy: string;
+  updatedAt: string;
+};
 
 const STATUS_STYLE: Record<PipelineStatus, { text: string; bg: string; border: string; icon: typeof IconCheck; label: string }> = {
   PENDING: { text: "text-zinc-400", bg: "bg-zinc-100", border: "border-zinc-300", icon: IconCircleDashed, label: "Queued" },
@@ -30,16 +54,16 @@ const STATUS_STYLE: Record<PipelineStatus, { text: string; bg: string; border: s
   FAILED: { text: "text-red-700", bg: "bg-red-100", border: "border-red-500", icon: IconX, label: "Failed" },
 };
 
-function overallStatus(stages: StageState[]): PipelineStatus {
-  if (stages.some((s) => s.status === "FAILED")) return "FAILED";
-  if (stages.some((s) => s.status === "AWAITING_INPUT")) return "AWAITING_INPUT";
-  if (stages.some((s) => s.status === "IN_PROGRESS")) return "IN_PROGRESS";
-  if (stages.every((s) => s.status === "COMPLETED")) return "COMPLETED";
+function overallStatus(statuses: PipelineStatus[]): PipelineStatus {
+  if (statuses.some((s) => s === "FAILED")) return "FAILED";
+  if (statuses.some((s) => s === "AWAITING_INPUT")) return "AWAITING_INPUT";
+  if (statuses.some((s) => s === "IN_PROGRESS")) return "IN_PROGRESS";
+  if (statuses.length > 0 && statuses.every((s) => s === "COMPLETED")) return "COMPLETED";
   return "PENDING";
 }
 
 function fmtDateTime(value: string | null): string {
-  if (!value) return "Not started";
+  if (!value) return "—";
   return new Date(value).toLocaleString(undefined, {
     day: "2-digit",
     month: "short",
@@ -61,19 +85,20 @@ function PipelineCard({
   cycleLabel: string;
   periodDateLabel: string;
   isAdmin: boolean;
-  onUpdate: (pipeline: Pipeline) => void;
+  onUpdate: (pipeline: Pipeline, states: ProcedureState[]) => void;
 }) {
-  const [stages, setStages] = useState<StageState[]>([]);
-  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [states, setStates] = useState<ProcedureState[]>([]);
+  const [stageStatuses, setStageStatuses] = useState<Record<string, PipelineStatus>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [showLog, setShowLog] = useState(false);
+  const [history, setHistory] = useState<RunHistoryEntry[] | null>(null);
 
   const load = useCallback(async () => {
-    const response = await fetch(`/api/pipelines/${pipeline.id}/status?timeKey=${timeKey}`);
+    const response = await fetch(`/api/pipelines/${pipeline.id}/procedures?timeKey=${timeKey}`);
     if (response.ok) {
       const data = await response.json();
-      setStages(data.stages ?? []);
-      setActivity(data.activity ?? []);
+      setStates(data.states ?? []);
+      setStageStatuses(data.stageStatuses ?? {});
     }
     setIsLoading(false);
   }, [pipeline.id, timeKey]);
@@ -81,6 +106,15 @@ function PipelineCard({
   useEffect(() => {
     load();
   }, [load]);
+
+  async function openLog() {
+    setShowLog(true);
+    const response = await fetch(`/api/pipelines/${pipeline.id}/procedures/history?timeKey=${timeKey}`);
+    if (response.ok) {
+      const data = await response.json();
+      setHistory(data.history ?? []);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -90,16 +124,17 @@ function PipelineCard({
     );
   }
 
-  const completedCount = stages.filter((s) => s.status === "COMPLETED").length;
-  const attentionCount = stages.filter((s) => s.status === "AWAITING_INPUT").length;
-  const failedCount = stages.filter((s) => s.status === "FAILED").length;
-  const queuedCount = stages.filter((s) => s.status === "PENDING").length;
-  const pct = stages.length ? Math.round((completedCount / stages.length) * 100) : 0;
-  const overall = overallStatus(stages);
+  const stageList = PIPELINE_STAGES.map((s) => ({ ...s, status: stageStatuses[s.key] ?? "PENDING" }));
+  const completedStages = stageList.filter((s) => s.status === "COMPLETED").length;
+  const pct = stageList.length ? Math.round((completedStages / stageList.length) * 100) : 0;
+  const overall = overallStatus(stageList.map((s) => s.status));
   const overallStyle = STATUS_STYLE[overall];
-  const flagged = stages.find((s) => s.status === "AWAITING_INPUT" || s.status === "FAILED");
-  const currentStage =
-    stages.find((s) => s.status === "IN_PROGRESS") ?? stages.find((s) => s.status === "AWAITING_INPUT");
+
+  const completedProcs = states.filter((s) => s.status === "COMPLETED").length;
+  const attentionProcs = states.filter((s) => s.status === "AWAITING_INPUT" || s.status === "FAILED").length;
+  const queuedProcs = states.filter((s) => s.status === "PENDING").length;
+  const flagged = states.find((s) => s.status === "AWAITING_INPUT" || s.status === "FAILED");
+  const currentProc = states.find((s) => s.status === "IN_PROGRESS") ?? flagged;
 
   return (
     <div className="flex flex-col gap-3">
@@ -115,7 +150,7 @@ function PipelineCard({
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowLog(true)}
+              onClick={openLog}
               className="flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
             >
               <IconDocument className="h-3.5 w-3.5" />
@@ -123,8 +158,9 @@ function PipelineCard({
             </button>
             {isAdmin && (
               <button
-                onClick={() => onUpdate(pipeline)}
-                className="flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+                onClick={() => onUpdate(pipeline, states)}
+                disabled={states.length === 0}
+                className="flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <IconPencil className="h-3.5 w-3.5" />
                 Update status
@@ -133,7 +169,7 @@ function PipelineCard({
           </div>
         </div>
         <p className="mt-1 text-xs text-zinc-500">
-          {cycleLabel} cycle · {completedCount} of {stages.length} stages complete · started by{" "}
+          {cycleLabel} cycle · {states.length} procedure{states.length === 1 ? "" : "s"} · started by{" "}
           {pipeline.createdBy}
         </p>
 
@@ -141,15 +177,16 @@ function PipelineCard({
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-100">
             <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
           </div>
-          <span className="text-xs font-medium text-emerald-600">{pct}% complete</span>
+          <span className="text-xs font-medium text-emerald-600">{pct}% of stages complete</span>
         </div>
 
         <div className="mt-5 flex items-start">
-          {stages.map((s, i) => {
+          {stageList.map((s, i) => {
             const style = STATUS_STYLE[s.status];
             const Icon = style.icon;
+            const procCountInStage = states.filter((st) => st.procedure.stage === s.key).length;
             return (
-              <div key={s.stage} className="flex flex-1 items-start last:flex-none">
+              <div key={s.key} className="flex flex-1 items-start last:flex-none">
                 <div className="flex min-w-0 flex-1 flex-col items-center">
                   <span
                     className={`flex h-8 w-8 items-center justify-center rounded-full border ${style.bg} ${style.text} ${style.border}`}
@@ -157,12 +194,14 @@ function PipelineCard({
                     <Icon className={`h-4 w-4 ${s.status === "IN_PROGRESS" ? "animate-spin" : ""}`} />
                   </span>
                   <p className="mt-2 text-center text-[11px] font-medium leading-tight text-zinc-900">
-                    {i + 1}. {PIPELINE_STAGES[i].label}
+                    {i + 1}. {s.label}
                   </p>
                   <span className={`mt-1 rounded-full px-2 py-0.5 text-[10px] ${style.bg} ${style.text}`}>{style.label}</span>
-                  <p className={`mt-1 text-center text-[10px] ${style.text}`}>{fmtDateTime(s.updatedAt)}</p>
+                  <p className="mt-1 text-center text-[10px] text-zinc-400">
+                    {procCountInStage} procedure{procCountInStage === 1 ? "" : "s"}
+                  </p>
                 </div>
-                {i < stages.length - 1 && (
+                {i < stageList.length - 1 && (
                   <div className="flex flex-none pt-4">
                     <div className={`h-0.5 w-8 ${s.status === "COMPLETED" ? "bg-emerald-500" : "bg-zinc-200"}`} />
                   </div>
@@ -176,8 +215,9 @@ function PipelineCard({
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3">
             <span className={`flex items-center gap-1.5 text-xs ${STATUS_STYLE[flagged.status].text}`}>
               <IconAlertTriangle className="h-3.5 w-3.5" />
-              {PIPELINE_STAGES.find((s) => s.key === flagged.stage)?.label} needs attention
-              {flagged.note ? ` — ${flagged.note}` : ""}
+              {flagged.procedure.name} ({PIPELINE_STAGES.find((s) => s.key === flagged.procedure.stage)?.label}) needs
+              attention
+              {flagged.isBlocked ? ` — ${flagged.blockedReason}` : flagged.note ? ` — ${flagged.note}` : ""}
             </span>
           </div>
         )}
@@ -188,19 +228,19 @@ function PipelineCard({
           <p className="mb-3 text-sm font-semibold text-zinc-900">Cycle summary</p>
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-md bg-zinc-50 p-2.5 text-center">
-              <p className="text-lg font-semibold text-zinc-900">{stages.length}</p>
-              <p className="text-[10px] text-zinc-500">Total stages</p>
+              <p className="text-lg font-semibold text-zinc-900">{states.length}</p>
+              <p className="text-[10px] text-zinc-500">Total procedures</p>
             </div>
             <div className="rounded-md bg-zinc-50 p-2.5 text-center">
-              <p className="text-lg font-semibold text-emerald-600">{completedCount}</p>
+              <p className="text-lg font-semibold text-emerald-600">{completedProcs}</p>
               <p className="text-[10px] text-zinc-500">Completed</p>
             </div>
             <div className="rounded-md bg-zinc-50 p-2.5 text-center">
-              <p className="text-lg font-semibold text-amber-600">{attentionCount + failedCount}</p>
+              <p className="text-lg font-semibold text-amber-600">{attentionProcs}</p>
               <p className="text-[10px] text-zinc-500">Attention</p>
             </div>
             <div className="rounded-md bg-zinc-50 p-2.5 text-center">
-              <p className="text-lg font-semibold text-zinc-400">{queuedCount}</p>
+              <p className="text-lg font-semibold text-zinc-400">{queuedProcs}</p>
               <p className="text-[10px] text-zinc-500">Queued</p>
             </div>
           </div>
@@ -211,60 +251,58 @@ function PipelineCard({
         </div>
 
         <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-          <p className="mb-3 text-sm font-semibold text-zinc-900">Stage details</p>
-          {currentStage ? (
+          <p className="mb-3 text-sm font-semibold text-zinc-900">Procedure details</p>
+          {currentProc ? (
             <div className="flex flex-col gap-1.5 text-xs">
               <div className="flex justify-between">
-                <span className="text-zinc-500">Current stage</span>
-                <span className="font-medium text-zinc-900">
-                  {PIPELINE_STAGES.find((s) => s.key === currentStage.stage)?.label}
+                <span className="text-zinc-500">Procedure</span>
+                <span className="font-medium text-zinc-900">{currentProc.procedure.name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Stage</span>
+                <span className="text-zinc-900">
+                  {PIPELINE_STAGES.find((s) => s.key === currentProc.procedure.stage)?.label}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-500">Status</span>
-                <span className={STATUS_STYLE[currentStage.status].text}>{STATUS_STYLE[currentStage.status].label}</span>
+                <span className={STATUS_STYLE[currentProc.status].text}>{STATUS_STYLE[currentProc.status].label}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Since</span>
-                <span className="text-zinc-900">{fmtDateTime(currentStage.updatedAt)}</span>
-              </div>
+              {currentProc.startTime && (
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Started</span>
+                  <span className="text-zinc-900">{fmtDateTime(currentProc.startTime)}</span>
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-xs text-zinc-500">
-              {completedCount === stages.length ? "All stages complete." : "Nothing in progress right now."}
+              {states.length > 0 && completedProcs === states.length
+                ? "All procedures complete."
+                : "Nothing in progress right now."}
             </p>
           )}
         </div>
 
         <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-          <p className="mb-3 text-sm font-semibold text-zinc-900">Recent activity</p>
-          {activity.length === 0 ? (
-            <p className="text-xs text-zinc-500">No activity logged for this period yet.</p>
-          ) : (
-            <div className="flex max-h-48 flex-col gap-2.5 overflow-y-auto">
-              {activity.map((a) => {
-                const style = STATUS_STYLE[a.status];
-                const Icon = style.icon;
-                return (
-                  <div key={a.id} className="flex items-start gap-2">
-                    <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${style.text}`} />
-                    <div className="min-w-0">
-                      <p className="text-xs text-zinc-900">
-                        {PIPELINE_STAGES.find((s) => s.key === a.stage)?.label} — {style.label.toLowerCase()}
-                      </p>
-                      <p className="text-[10.5px] text-zinc-400">{fmtDateTime(a.updatedAt)}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <p className="mb-3 text-sm font-semibold text-zinc-900">By stage</p>
+          <div className="flex flex-col gap-2">
+            {stageList.map((s) => {
+              const style = STATUS_STYLE[s.status];
+              return (
+                <div key={s.key} className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-700">{s.label}</span>
+                  <span className={`rounded-full px-2 py-0.5 ${style.bg} ${style.text}`}>{style.label}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
       {showLog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-lg bg-white p-5 shadow-lg">
+          <div className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-lg bg-white p-5 shadow-lg">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-zinc-900">Log — {pipeline.name}</p>
@@ -278,31 +316,45 @@ function PipelineCard({
               </button>
             </div>
 
-            <div className="mt-4 flex-1 overflow-y-auto">
-              {activity.length === 0 ? (
+            <div className="mt-4 flex-1 overflow-auto">
+              {history === null ? (
+                <p className="text-sm text-zinc-500">Loading...</p>
+              ) : history.length === 0 ? (
                 <p className="text-sm text-zinc-500">No activity logged for this period yet.</p>
               ) : (
-                <div className="flex flex-col gap-3">
-                  {activity.map((a) => {
-                    const style = STATUS_STYLE[a.status];
-                    const Icon = style.icon;
-                    return (
-                      <div key={a.id} className="flex items-start gap-2.5 border-b border-zinc-100 pb-3 last:border-b-0">
-                        <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${style.text}`} />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm text-zinc-900">
-                            {PIPELINE_STAGES.find((s) => s.key === a.stage)?.label} —{" "}
-                            <span className={style.text}>{style.label.toLowerCase()}</span>
-                          </p>
-                          {a.note && <p className="mt-0.5 text-xs text-zinc-600">{a.note}</p>}
-                          <p className="mt-0.5 text-xs text-zinc-400">
-                            {fmtDateTime(a.updatedAt)} · by {a.updatedBy}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-zinc-200 text-zinc-500">
+                      <th className="py-2 pr-3 font-medium">Procedure</th>
+                      <th className="py-2 pr-3 font-medium">Stage</th>
+                      <th className="py-2 pr-3 font-medium">Depends on</th>
+                      <th className="py-2 pr-3 font-medium">Status</th>
+                      <th className="py-2 pr-3 font-medium">Started</th>
+                      <th className="py-2 pr-3 font-medium">Ended</th>
+                      <th className="py-2 pr-3 font-medium">Note</th>
+                      <th className="py-2 font-medium">By</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((h) => {
+                      const style = STATUS_STYLE[h.status];
+                      return (
+                        <tr key={h.id} className="border-b border-zinc-100 align-top text-zinc-700">
+                          <td className="py-2 pr-3 font-medium text-zinc-900">{h.procedureName}</td>
+                          <td className="py-2 pr-3">{PIPELINE_STAGES.find((s) => s.key === h.stage)?.label}</td>
+                          <td className="py-2 pr-3 text-zinc-500">{h.dependsOnDataset ?? "—"}</td>
+                          <td className="py-2 pr-3">
+                            <span className={`rounded-full px-2 py-0.5 ${style.bg} ${style.text}`}>{style.label}</span>
+                          </td>
+                          <td className="py-2 pr-3">{fmtDateTime(h.startTime)}</td>
+                          <td className="py-2 pr-3">{fmtDateTime(h.endTime)}</td>
+                          <td className="py-2 pr-3 max-w-xs text-zinc-600">{h.note ?? "—"}</td>
+                          <td className="py-2 text-zinc-500">{h.updatedBy}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>
@@ -318,7 +370,8 @@ export default function PipelineStatusPage() {
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [updatingPipeline, setUpdatingPipeline] = useState<Pipeline | null>(null);
-  const [updateStage, setUpdateStage] = useState<string>(PIPELINE_STAGES[0].key);
+  const [updateProcedures, setUpdateProcedures] = useState<ProcedureState[]>([]);
+  const [updateProcedureId, setUpdateProcedureId] = useState<number | null>(null);
   const [updateStatus, setUpdateStatus] = useState<PipelineStatus>("IN_PROGRESS");
   const [updateNote, setUpdateNote] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -355,25 +408,28 @@ export default function PipelineStatusPage() {
     load();
   }, [checked, load, refreshKey]);
 
-  function openUpdate(pipeline: Pipeline) {
+  function openUpdate(pipeline: Pipeline, states: ProcedureState[]) {
     setUpdatingPipeline(pipeline);
-    setUpdateStage(PIPELINE_STAGES[0].key);
+    setUpdateProcedures(states);
+    setUpdateProcedureId(states[0]?.procedure.id ?? null);
     setUpdateStatus("IN_PROGRESS");
     setUpdateNote("");
     setUpdateError("");
   }
 
+  const selectedProcState = updateProcedures.find((s) => s.procedure.id === updateProcedureId) ?? null;
+
   async function handleSaveUpdate() {
-    if (!updatingPipeline) return;
+    if (!updatingPipeline || !updateProcedureId) return;
     setIsSaving(true);
     setUpdateError("");
     try {
-      const response = await fetch(`/api/pipelines/${updatingPipeline.id}/status`, {
+      const response = await fetch(`/api/pipelines/${updatingPipeline.id}/procedures/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           timeKey: period.timeKey,
-          stage: updateStage,
+          procedureId: updateProcedureId,
           status: updateStatus,
           note: updateNote || undefined,
         }),
@@ -381,6 +437,28 @@ export default function PipelineStatusPage() {
       const data = await response.json();
       if (!response.ok) {
         setUpdateError(data.error ?? "Couldn't update status.");
+        return;
+      }
+      setUpdatingPipeline(null);
+      setRefreshKey((k) => k + 1);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleOverride(overrideType: "PROCEED_WITHOUT_UPLOAD" | "USE_PREVIOUS_PERIOD") {
+    if (!updatingPipeline || !updateProcedureId) return;
+    setIsSaving(true);
+    setUpdateError("");
+    try {
+      const response = await fetch(`/api/pipelines/${updatingPipeline.id}/procedures/override`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timeKey: period.timeKey, procedureId: updateProcedureId, overrideType }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setUpdateError(data.error ?? "Couldn't apply override.");
         return;
       }
       setUpdatingPipeline(null);
@@ -418,7 +496,7 @@ export default function PipelineStatusPage() {
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <p className="text-sm text-zinc-500">
-            Stage-by-stage status for each data pipeline, for the current reporting cycle.
+            Procedure-by-procedure status for each data pipeline, for the current reporting cycle.
           </p>
           {isAdminUser && (
             <button
@@ -460,51 +538,82 @@ export default function PipelineStatusPage() {
 
       {updatingPipeline && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-lg">
+          <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-lg">
             <p className="text-sm font-semibold text-zinc-900">Update status — {updatingPipeline.name}</p>
             <p className="mt-1 text-xs text-zinc-500">For the {period.periodLabel} cycle.</p>
 
             <div className="mt-4 flex flex-col gap-3">
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-zinc-700">Stage</label>
+                <label className="text-xs font-medium text-zinc-700">Procedure</label>
                 <select
-                  value={updateStage}
-                  onChange={(e) => setUpdateStage(e.target.value)}
+                  value={updateProcedureId ?? ""}
+                  onChange={(e) => setUpdateProcedureId(Number(e.target.value))}
                   className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
                 >
-                  {PIPELINE_STAGES.map((s) => (
-                    <option key={s.key} value={s.key}>
-                      {s.label}
+                  {updateProcedures.map((s) => (
+                    <option key={s.procedure.id} value={s.procedure.id}>
+                      {s.procedure.name} ({PIPELINE_STAGES.find((st) => st.key === s.procedure.stage)?.label})
                     </option>
                   ))}
                 </select>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-zinc-700">Status</label>
-                <select
-                  value={updateStatus}
-                  onChange={(e) => setUpdateStatus(e.target.value as PipelineStatus)}
-                  className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
-                >
-                  {PIPELINE_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {STATUS_STYLE[s].label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {selectedProcState?.isBlocked ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-amber-800">
+                    <IconAlertTriangle className="h-3.5 w-3.5" />
+                    This procedure is blocked
+                  </p>
+                  <p className="mt-1 text-xs text-amber-700">{selectedProcState.blockedReason}</p>
+                  <p className="mt-2 text-xs text-zinc-600">
+                    It can&rsquo;t proceed until the upload is approved — or you explicitly override it:
+                  </p>
+                  <div className="mt-2 flex flex-col gap-2">
+                    <button
+                      onClick={() => handleOverride("PROCEED_WITHOUT_UPLOAD")}
+                      disabled={isSaving}
+                      className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                    >
+                      Proceed without upload
+                    </button>
+                    <button
+                      onClick={() => handleOverride("USE_PREVIOUS_PERIOD")}
+                      disabled={isSaving}
+                      className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                    >
+                      Use previous period&rsquo;s file
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-zinc-700">Status</label>
+                    <select
+                      value={updateStatus}
+                      onChange={(e) => setUpdateStatus(e.target.value as PipelineStatus)}
+                      className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
+                    >
+                      {PIPELINE_STATUSES.map((s) => (
+                        <option key={s} value={s}>
+                          {STATUS_STYLE[s].label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-zinc-700">Note (optional)</label>
-                <textarea
-                  value={updateNote}
-                  onChange={(e) => setUpdateNote(e.target.value)}
-                  rows={2}
-                  placeholder="e.g. Missing July upload for one entity"
-                  className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
-                />
-              </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-zinc-700">Note (optional)</label>
+                    <textarea
+                      value={updateNote}
+                      onChange={(e) => setUpdateNote(e.target.value)}
+                      rows={2}
+                      placeholder="e.g. Retried after source system timeout"
+                      className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
+                    />
+                  </div>
+                </>
+              )}
 
               {updateError && (
                 <p className="text-sm text-red-600" role="alert">
@@ -521,13 +630,15 @@ export default function PipelineStatusPage() {
               >
                 Cancel
               </button>
-              <button
-                onClick={handleSaveUpdate}
-                disabled={isSaving}
-                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {isSaving ? "Saving..." : "Save"}
-              </button>
+              {!selectedProcState?.isBlocked && (
+                <button
+                  onClick={handleSaveUpdate}
+                  disabled={isSaving}
+                  className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {isSaving ? "Saving..." : "Save"}
+                </button>
+              )}
             </div>
           </div>
         </div>
