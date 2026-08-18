@@ -104,6 +104,8 @@ function PipelineCard({
   const [showLog, setShowLog] = useState(false);
   const [expandedStage, setExpandedStage] = useState<string | null>(null);
   const [history, setHistory] = useState<RunHistoryEntry[] | null>(null);
+  const [runningId, setRunningId] = useState<number | null>(null);
+  const [runError, setRunError] = useState("");
 
   const load = useCallback(async () => {
     const response = await fetch(`/api/pipelines/${pipeline.id}/procedures?timeKey=${timeKey}`);
@@ -125,6 +127,27 @@ function PipelineCard({
     if (response.ok) {
       const data = await response.json();
       setHistory(data.history ?? []);
+    }
+  }
+
+  async function handleRun(procedureId: number) {
+    setRunError("");
+    setRunningId(procedureId);
+    try {
+      const response = await fetch(`/api/pipelines/${pipeline.id}/procedures/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ procedureId, timeKey }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setRunError(data.error ?? "Couldn't run this procedure.");
+      } else if (data.status === "FAILED") {
+        setRunError(data.error ?? "The procedure ran but failed.");
+      }
+      await load();
+    } finally {
+      setRunningId(null);
     }
   }
 
@@ -200,7 +223,10 @@ function PipelineCard({
             return (
               <div key={s.key} className="flex flex-1 items-start last:flex-none">
                 <button
-                  onDoubleClick={() => setExpandedStage(s.key)}
+                  onDoubleClick={() => {
+                    setRunError("");
+                    setExpandedStage(s.key);
+                  }}
                   title="Double-click to view procedures"
                   className="flex min-w-0 flex-1 flex-col items-center rounded-md py-1 transition-colors hover:bg-zinc-50"
                 >
@@ -399,6 +425,12 @@ function PipelineCard({
               </button>
             </div>
 
+            {runError && (
+              <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-700" role="alert">
+                {runError}
+              </p>
+            )}
+
             <div className="mt-4 flex flex-col gap-2">
               {states
                 .filter((st) => st.procedure.stage === expandedStage)
@@ -426,9 +458,21 @@ function PipelineCard({
                           {st.isBlocked ? st.blockedReason : st.note}
                         </p>
                       )}
-                      <div className="mt-1.5 flex gap-3 text-[10.5px] text-zinc-400">
-                        <span>Started {fmtDateTime(st.startTime)}</span>
-                        <span>Ended {fmtDateTime(st.endTime)}</span>
+                      <div className="mt-1.5 flex items-center justify-between gap-3">
+                        <div className="flex gap-3 text-[10.5px] text-zinc-400">
+                          <span>Started {fmtDateTime(st.startTime)}</span>
+                          <span>Ended {fmtDateTime(st.endTime)}</span>
+                        </div>
+                        {isAdmin && (
+                          <button
+                            onClick={() => handleRun(st.procedure.id)}
+                            disabled={runningId !== null || st.status === "IN_PROGRESS"}
+                            className="flex items-center gap-1 rounded-md border border-zinc-300 bg-white px-2 py-1 text-[10.5px] font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {runningId === st.procedure.id && <IconLoader className="h-3 w-3 animate-spin" />}
+                            {runningId === st.procedure.id ? "Running..." : "Run"}
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
