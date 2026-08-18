@@ -341,8 +341,8 @@ function PipelineCard({
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-zinc-200 text-zinc-500">
-                      <th className="py-2 pr-3 font-medium">Package</th>
                       <th className="py-2 pr-3 font-medium">Procedure</th>
+                      <th className="py-2 pr-3 font-medium">Package</th>
                       <th className="py-2 pr-3 font-medium">Stage</th>
                       <th className="py-2 pr-3 font-medium">Depends on</th>
                       <th className="py-2 pr-3 font-medium">Status</th>
@@ -357,8 +357,8 @@ function PipelineCard({
                       const style = STATUS_STYLE[h.status];
                       return (
                         <tr key={h.id} className="border-b border-zinc-100 align-top text-zinc-700">
-                          <td className="py-2 pr-3 text-zinc-500">{h.packageName ?? "—"}</td>
                           <td className="py-2 pr-3 font-medium text-zinc-900">{h.procedureName}</td>
+                          <td className="py-2 pr-3 text-zinc-500">{h.packageName ?? "—"}</td>
                           <td className="py-2 pr-3">{PIPELINE_STAGES.find((s) => s.key === h.stage)?.label}</td>
                           <td className="py-2 pr-3 text-zinc-500">{h.dependsOnDataset ?? "—"}</td>
                           <td className="py-2 pr-3">
