@@ -8,6 +8,8 @@ export type ProcedureDef = {
   packageName: string | null;
   stage: PipelineStageKey;
   dependsOnDataset: string | null;
+  takesDateParam: boolean;
+  takesScopeParam: boolean;
 };
 
 export function fullProcedureName(p: { procedureName: string; packageName: string | null }): string {
@@ -56,10 +58,13 @@ export async function getProceduresForPipeline(pipelineId: number): Promise<Proc
     PACKAGE_NAME: string | null;
     STAGE: string;
     DEPENDS_ON_DATASET: string | null;
+    TAKES_DATE_PARAM: number;
+    TAKES_SCOPE_PARAM: number;
   };
   const rows: Row[] = await withConnection(async (connection) => {
     const result = await connection.execute<Row>(
-      `SELECT p.id, p.procedure_name, p.package_name, p.stage, p.depends_on_dataset
+      `SELECT p.id, p.procedure_name, p.package_name, p.stage, p.depends_on_dataset,
+              p.takes_date_param, p.takes_scope_param
        FROM PROCEDURES p
        JOIN PIPELINE_PROCEDURES pp ON pp.procedure_id = p.id
        WHERE pp.pipeline_id = :pipelineId
@@ -74,6 +79,8 @@ export async function getProceduresForPipeline(pipelineId: number): Promise<Proc
     packageName: r.PACKAGE_NAME,
     stage: r.STAGE as PipelineStageKey,
     dependsOnDataset: r.DEPENDS_ON_DATASET,
+    takesDateParam: r.TAKES_DATE_PARAM === 1,
+    takesScopeParam: r.TAKES_SCOPE_PARAM === 1,
   }));
 }
 
@@ -230,6 +237,102 @@ export async function overrideProcedure(
     )
   );
   return {};
+}
+
+/**
+ * Actually triggers the real stored procedure via EXEC - this is the
+ * "functional, not informative" trigger. Package/procedure names always
+ * come from our own PROCEDURES table (only admins can create rows there via
+ * createProcedure), never from raw request input, so building the PL/SQL
+ * block from them is the same trust boundary as the dataset whitelist in
+ * uploadInsert.ts - not a SQL injection risk.
+ *
+ * Date argument is unified to 'DD-MON-YYYY' across every procedure. Two
+ * audit rows are written (IN_PROGRESS, then COMPLETED/FAILED) rather than
+ * updating one in place, matching the append-only log used everywhere else
+ * - the completion row carries both start and end time so the latest row
+ * alone has the full picture for the UI.
+ */
+export async function runProcedure(
+  pipelineId: number,
+  procedureId: number,
+  timeKey: string,
+  triggeredBy: string
+): Promise<{ error?: string; status?: PipelineStatus }> {
+  const procedures = await getProceduresForPipeline(pipelineId);
+  const procedure = procedures.find((p) => p.id === procedureId);
+  if (!procedure) return { error: "Unknown procedure for this pipeline." };
+
+  if (procedure.dependsOnDataset) {
+    const latestRun = await getLatestRun(pipelineId, procedureId, timeKey);
+    const hasOverride = latestRun?.OVERRIDE_TYPE ?? null;
+    const approved = await isDatasetApproved(procedure.dependsOnDataset, timeKey);
+    if (!approved && !hasOverride) {
+      return {
+        error: `This procedure depends on an approved upload for ${procedure.dependsOnDataset}, which hasn't happened yet for this period. Use an override action, or wait for the upload to be approved.`,
+      };
+    }
+  }
+
+  // Let Oracle generate start_time itself (SYSTIMESTAMP) rather than binding
+  // a JS Date - the two go through different timezone conversions (session
+  // TZ vs DB TZ) for a plain TIMESTAMP column, which previously produced a
+  // start_time hours ahead of the SYSTIMESTAMP-based end_time. Capturing the
+  // RETURNING value and reusing it for the completion row keeps both
+  // timestamps on the exact same value, not just the same wall-clock rule.
+  const startedAt = await withConnection(async (connection) => {
+    const result = await connection.execute<{ ST: Date[] }>(
+      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, updated_by)
+       VALUES (:pipelineId, :procedureId, :timeKey, 'IN_PROGRESS', SYSTIMESTAMP, :updatedBy)
+       RETURNING start_time INTO :st`,
+      {
+        pipelineId,
+        procedureId,
+        timeKey,
+        updatedBy: triggeredBy,
+        st: { dir: oracledb.BIND_OUT, type: oracledb.DB_TYPE_TIMESTAMP },
+      },
+      { autoCommit: true }
+    );
+    return (result.outBinds as { st: Date[] }).st[0];
+  });
+
+  const target = fullProcedureName(procedure);
+  const args: string[] = [];
+  if (procedure.takesDateParam) args.push("v_date");
+  if (procedure.takesScopeParam) args.push("'ALL'");
+  const call = args.length ? `${target}(${args.join(", ")});` : `${target};`;
+  const block = `
+    DECLARE
+      v_date VARCHAR2(20) := TO_CHAR(TO_DATE(:timeKey, 'YYYYMMDD'), 'DD-MON-YYYY');
+    BEGIN
+      ${call}
+    END;
+  `;
+
+  try {
+    await withConnection((connection) => connection.execute(block, { timeKey }, { autoCommit: true }));
+    await withConnection((connection) =>
+      connection.execute(
+        `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, end_time, updated_by)
+         VALUES (:pipelineId, :procedureId, :timeKey, 'COMPLETED', :startedAt, SYSTIMESTAMP, :updatedBy)`,
+        { pipelineId, procedureId, timeKey, startedAt, updatedBy: triggeredBy },
+        { autoCommit: true }
+      )
+    );
+    return { status: "COMPLETED" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await withConnection((connection) =>
+      connection.execute(
+        `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, end_time, note, updated_by)
+         VALUES (:pipelineId, :procedureId, :timeKey, 'FAILED', :startedAt, SYSTIMESTAMP, :note, :updatedBy)`,
+        { pipelineId, procedureId, timeKey, startedAt, note: message.slice(0, 1000), updatedBy: triggeredBy },
+        { autoCommit: true }
+      )
+    );
+    return { status: "FAILED", error: message };
+  }
 }
 
 export type RunHistoryEntry = {
