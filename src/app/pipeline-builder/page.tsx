@@ -12,6 +12,9 @@ import {
   IconSearch,
   IconLoader,
   IconAlertTriangle,
+  IconDots,
+  IconArchive,
+  IconTrash,
 } from "@/components/icons";
 import type { Pipeline } from "@/lib/pipelines";
 
@@ -38,6 +41,7 @@ export default function PipelineBuilderListPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
 
   const period = getReportingPeriod();
 
@@ -74,6 +78,20 @@ export default function PipelineBuilderListPage() {
       return;
     }
     router.push(`/pipeline-builder/${data.id}`);
+  }
+
+  async function handleArchive(p: Pipeline) {
+    setMenuOpenId(null);
+    if (!window.confirm(`Archive "${p.name}"? It'll be hidden from the builder and status page. Its groups, procedures, and run history are kept — nothing is deleted.`)) return;
+    await fetch(`/api/pipelines/${p.id}?mode=archive`, { method: "DELETE" });
+    load();
+  }
+
+  async function handleDelete(p: Pipeline) {
+    setMenuOpenId(null);
+    if (!window.confirm(`Permanently delete "${p.name}"? This removes its groups, procedures, and ALL run history. This cannot be undone.`)) return;
+    await fetch(`/api/pipelines/${p.id}?mode=delete`, { method: "DELETE" });
+    load();
   }
 
   if (!username) return null;
@@ -255,6 +273,38 @@ export default function PipelineBuilderListPage() {
 
                   {/* Edit icon */}
                   <IconPencil className="h-4 w-4 shrink-0 text-zinc-300 transition-colors group-hover:text-indigo-400" />
+
+                  {/* Row menu: archive / delete */}
+                  <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => setMenuOpenId((cur) => (cur === p.id ? null : p.id))}
+                      className="rounded-lg p-1.5 text-zinc-300 hover:bg-zinc-100 hover:text-zinc-600"
+                      aria-label="Pipeline options"
+                    >
+                      <IconDots className="h-4 w-4" />
+                    </button>
+                    {menuOpenId === p.id && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} />
+                        <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
+                          <button
+                            onClick={() => handleArchive(p)}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+                          >
+                            <IconArchive className="h-3.5 w-3.5" />
+                            Archive pipeline
+                          </button>
+                          <button
+                            onClick={() => handleDelete(p)}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50"
+                          >
+                            <IconTrash className="h-3.5 w-3.5" />
+                            Delete pipeline
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               );
             })}

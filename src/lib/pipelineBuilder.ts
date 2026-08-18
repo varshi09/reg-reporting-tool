@@ -446,7 +446,7 @@ export async function getPipelineRunState(
 export async function getAllPipelinesRunState(timeKey: string): Promise<PipelineRunState[]> {
   type PipelineRow = { ID: number };
   const pipelines = await withConnection(async (conn) => {
-    const r = await conn.execute<PipelineRow>(`SELECT id FROM PIPELINES ORDER BY id`);
+    const r = await conn.execute<PipelineRow>(`SELECT id FROM PIPELINES WHERE is_active = 1 ORDER BY id`);
     return r.rows ?? [];
   });
   const states = await Promise.all(pipelines.map((p) => getPipelineRunState(p.ID, timeKey)));

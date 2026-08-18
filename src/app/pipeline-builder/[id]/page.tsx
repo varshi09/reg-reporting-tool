@@ -21,6 +21,8 @@ import {
   IconDocument,
   IconX,
   IconChevronDown,
+  IconDots,
+  IconArchive,
 } from "@/components/icons";
 import type { PipelineStructure, CatalogProcedure, ExecMode } from "@/lib/pipelineBuilder";
 
@@ -125,6 +127,7 @@ export default function PipelineCanvasPage() {
   const [depModalPp, setDepModalPp] = useState<{ ppId: number; current: string | null } | null>(null);
   const [dragOverGroup, setDragOverGroup] = useState<number | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const dragPayload = useRef<DragPayload | null>(null);
 
   const load = useCallback(async () => {
@@ -216,6 +219,22 @@ export default function PipelineCanvasPage() {
     });
     setDepModalPp(null);
     load();
+  }
+
+  async function handleArchivePipeline() {
+    setMenuOpen(false);
+    if (!structure) return;
+    if (!window.confirm(`Archive "${structure.pipelineName}"? It'll be hidden from the builder and status page. Its groups, procedures, and run history are kept — nothing is deleted.`)) return;
+    await fetch(`/api/pipelines/${pipelineId}?mode=archive`, { method: "DELETE" });
+    router.push("/pipeline-builder");
+  }
+
+  async function handleDeletePipeline() {
+    setMenuOpen(false);
+    if (!structure) return;
+    if (!window.confirm(`Permanently delete "${structure.pipelineName}"? This removes its groups, procedures, and ALL run history. This cannot be undone.`)) return;
+    await fetch(`/api/pipelines/${pipelineId}?mode=delete`, { method: "DELETE" });
+    router.push("/pipeline-builder");
   }
 
   async function handleDropOnGroup(groupId: number, targetIndex?: number) {
@@ -332,6 +351,36 @@ export default function PipelineCanvasPage() {
                 <IconSave className="h-3.5 w-3.5" />
                 Save pipeline
               </button>
+              <div className="relative">
+                <button
+                  onClick={() => setMenuOpen((v) => !v)}
+                  className="rounded-lg border border-zinc-200 p-1.5 text-zinc-500 hover:bg-zinc-50"
+                  aria-label="Pipeline options"
+                >
+                  <IconDots className="h-3.5 w-3.5" />
+                </button>
+                {menuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+                    <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
+                      <button
+                        onClick={handleArchivePipeline}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+                      >
+                        <IconArchive className="h-3.5 w-3.5" />
+                        Archive pipeline
+                      </button>
+                      <button
+                        onClick={handleDeletePipeline}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50"
+                      >
+                        <IconTrash className="h-3.5 w-3.5" />
+                        Delete pipeline
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>

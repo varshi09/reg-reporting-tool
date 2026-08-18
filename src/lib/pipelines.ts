@@ -96,3 +96,40 @@ export async function createPipeline(name: string, createdBy: string): Promise<n
     return (result.outBinds as { id: number[] }).id[0];
   });
 }
+
+/** Reversible: hides the pipeline from the builder list and status page. Groups, procedures, and run history are untouched. */
+export async function archivePipeline(pipelineId: number): Promise<void> {
+  await withConnection((connection) =>
+    connection.execute(
+      `UPDATE PIPELINES SET is_active = 0 WHERE id = :id`,
+      { id: pipelineId },
+      { autoCommit: true }
+    )
+  );
+}
+
+/** Irreversible: removes the pipeline and everything under it, including the PIPELINE_PROCEDURE_RUNS audit history. */
+export async function deletePipelineHard(pipelineId: number): Promise<void> {
+  await withConnection(async (connection) => {
+    await connection.execute(
+      `DELETE FROM PIPELINE_PROCEDURE_RUNS WHERE pipeline_id = :id`,
+      { id: pipelineId },
+      { autoCommit: false }
+    );
+    await connection.execute(
+      `DELETE FROM PIPELINE_PROCEDURES WHERE pipeline_id = :id`,
+      { id: pipelineId },
+      { autoCommit: false }
+    );
+    await connection.execute(
+      `DELETE FROM PIPELINE_GROUPS WHERE pipeline_id = :id`,
+      { id: pipelineId },
+      { autoCommit: false }
+    );
+    await connection.execute(
+      `DELETE FROM PIPELINES WHERE id = :id`,
+      { id: pipelineId },
+      { autoCommit: true }
+    );
+  });
+}

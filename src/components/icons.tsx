@@ -332,6 +332,16 @@ export function IconTrash(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function IconArchive(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="4" y="4.5" width="16" height="4" rx="1" />
+      <path d="M5 8.5v9.5a1.5 1.5 0 0 0 1.5 1.5h11a1.5 1.5 0 0 0 1.5-1.5V8.5" />
+      <path d="M10 12.5h4" />
+    </svg>
+  );
+}
+
 export function IconInfoCircle(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
