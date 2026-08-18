@@ -14,6 +14,7 @@ import {
   IconArrowRight,
   IconShieldCheck,
   IconCloudUpload,
+  IconGitBranch,
 } from "@/components/icons";
 
 const QUICK_ACTIONS = [
@@ -24,6 +25,14 @@ const QUICK_ACTIONS = [
     icon: IconDocument,
     iconBg: "bg-indigo-100",
     iconColor: "text-indigo-600",
+  },
+  {
+    href: "/pipeline-status",
+    title: "Pipeline Status",
+    description: "Stage-by-stage status of each data pipeline.",
+    icon: IconGitBranch,
+    iconBg: "bg-violet-100",
+    iconColor: "text-violet-600",
   },
   {
     href: "/reconciliation",
@@ -230,7 +239,7 @@ export default function DashboardPage() {
 
         <div>
           <p className="mb-3 text-sm font-semibold text-black">Quick actions</p>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {QUICK_ACTIONS.map((action) => {
               const Icon = action.icon;
               return (
