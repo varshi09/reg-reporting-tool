@@ -194,8 +194,8 @@ export async function setProcedureStatus(
     connection.execute(
       `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, end_time, note, updated_by)
        VALUES (:pipelineId, :procedureId, :timeKey, :status,
-               CASE WHEN :status1 = 'IN_PROGRESS' THEN SYSTIMESTAMP ELSE NULL END,
-               CASE WHEN :status2 IN ('COMPLETED', 'FAILED') THEN SYSTIMESTAMP ELSE NULL END,
+               CASE WHEN :status1 = 'IN_PROGRESS' THEN LOCALTIMESTAMP ELSE NULL END,
+               CASE WHEN :status2 IN ('COMPLETED', 'FAILED') THEN LOCALTIMESTAMP ELSE NULL END,
                :note, :updatedBy)`,
       { pipelineId, procedureId, timeKey, status, status1: status, status2: status, note, updatedBy },
       { autoCommit: true }
@@ -274,16 +274,16 @@ export async function runProcedure(
     }
   }
 
-  // Let Oracle generate start_time itself (SYSTIMESTAMP) rather than binding
-  // a JS Date - the two go through different timezone conversions (session
-  // TZ vs DB TZ) for a plain TIMESTAMP column, which previously produced a
-  // start_time hours ahead of the SYSTIMESTAMP-based end_time. Capturing the
-  // RETURNING value and reusing it for the completion row keeps both
-  // timestamps on the exact same value, not just the same wall-clock rule.
+  // Let Oracle generate start_time itself (LOCALTIMESTAMP, which reflects
+  // the GST session timezone forced in db.ts) rather than binding a JS
+  // Date - the two previously went through different timezone conversions
+  // for a plain TIMESTAMP column. Capturing the RETURNING value and
+  // reusing it for the completion row keeps both timestamps on the exact
+  // same value, not just the same wall-clock rule.
   const startedAt = await withConnection(async (connection) => {
     const result = await connection.execute<{ ST: Date[] }>(
       `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, updated_by)
-       VALUES (:pipelineId, :procedureId, :timeKey, 'IN_PROGRESS', SYSTIMESTAMP, :updatedBy)
+       VALUES (:pipelineId, :procedureId, :timeKey, 'IN_PROGRESS', LOCALTIMESTAMP, :updatedBy)
        RETURNING start_time INTO :st`,
       {
         pipelineId,
@@ -315,7 +315,7 @@ export async function runProcedure(
     await withConnection((connection) =>
       connection.execute(
         `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, end_time, updated_by)
-         VALUES (:pipelineId, :procedureId, :timeKey, 'COMPLETED', :startedAt, SYSTIMESTAMP, :updatedBy)`,
+         VALUES (:pipelineId, :procedureId, :timeKey, 'COMPLETED', :startedAt, LOCALTIMESTAMP, :updatedBy)`,
         { pipelineId, procedureId, timeKey, startedAt, updatedBy: triggeredBy },
         { autoCommit: true }
       )
@@ -326,7 +326,7 @@ export async function runProcedure(
     await withConnection((connection) =>
       connection.execute(
         `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, end_time, note, updated_by)
-         VALUES (:pipelineId, :procedureId, :timeKey, 'FAILED', :startedAt, SYSTIMESTAMP, :note, :updatedBy)`,
+         VALUES (:pipelineId, :procedureId, :timeKey, 'FAILED', :startedAt, LOCALTIMESTAMP, :note, :updatedBy)`,
         { pipelineId, procedureId, timeKey, startedAt, note: message.slice(0, 1000), updatedBy: triggeredBy },
         { autoCommit: true }
       )

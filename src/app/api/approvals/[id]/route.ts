@@ -76,7 +76,7 @@ export async function POST(
       connection.execute(
         `UPDATE UPLOAD_LOG
          SET status = 'REJECTED', reject_reason = :reason, reviewed_by = :username,
-             reviewed_at = SYSTIMESTAMP, rows_json = NULL
+             reviewed_at = LOCALTIMESTAMP, rows_json = NULL
          WHERE id = :id`,
         { reason, username, id },
         { autoCommit: true }
@@ -131,7 +131,7 @@ export async function POST(
     connection.execute(
       `UPDATE UPLOAD_LOG
        SET status = 'APPROVED', inserted_count = :insertedCount, failed_count = 0,
-           failure_reasons = NULL, reviewed_by = :username, reviewed_at = SYSTIMESTAMP,
+           failure_reasons = NULL, reviewed_by = :username, reviewed_at = LOCALTIMESTAMP,
            rows_json = NULL
        WHERE id = :id`,
       { insertedCount, username, id },
