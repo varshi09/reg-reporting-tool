@@ -16,7 +16,6 @@ import {
   IconCalendar,
   IconPlus,
   IconDocument,
-  IconChevronDown,
 } from "@/components/icons";
 
 type Pipeline = { id: number; name: string; isActive: boolean; createdBy: string; createdAt: string };
@@ -187,11 +186,11 @@ function PipelineCard({
             const style = STATUS_STYLE[s.status];
             const Icon = style.icon;
             const procsInStage = states.filter((st) => st.procedure.stage === s.key);
-            const isExpanded = expandedStage === s.key;
             return (
               <div key={s.key} className="flex flex-1 items-start last:flex-none">
                 <button
-                  onClick={() => setExpandedStage(isExpanded ? null : s.key)}
+                  onDoubleClick={() => setExpandedStage(s.key)}
+                  title="Double-click to view procedures"
                   className="flex min-w-0 flex-1 flex-col items-center rounded-md py-1 transition-colors hover:bg-zinc-50"
                 >
                   <span
@@ -203,9 +202,8 @@ function PipelineCard({
                     {i + 1}. {s.label}
                   </p>
                   <span className={`mt-1 rounded-full px-2 py-0.5 text-[10px] ${style.bg} ${style.text}`}>{style.label}</span>
-                  <span className="mt-1 flex items-center gap-0.5 text-[10px] text-indigo-500">
+                  <span className="mt-1 text-[10px] text-indigo-500">
                     {procsInStage.length} procedure{procsInStage.length === 1 ? "" : "s"}
-                    <IconChevronDown className={`h-2.5 w-2.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
                   </span>
                 </button>
                 {i < stageList.length - 1 && (
@@ -217,46 +215,6 @@ function PipelineCard({
             );
           })}
         </div>
-
-        {expandedStage && (
-          <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-            <p className="mb-2 text-xs font-semibold text-zinc-700">
-              {PIPELINE_STAGES.find((s) => s.key === expandedStage)?.label} — procedures
-            </p>
-            <div className="flex flex-col gap-2">
-              {states
-                .filter((st) => st.procedure.stage === expandedStage)
-                .map((st) => {
-                  const style = STATUS_STYLE[st.status];
-                  const Icon = style.icon;
-                  return (
-                    <div
-                      key={st.procedure.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2"
-                    >
-                      <div className="flex items-center gap-2 text-xs">
-                        <Icon className={`h-3.5 w-3.5 shrink-0 ${style.text} ${st.status === "IN_PROGRESS" ? "animate-spin" : ""}`} />
-                        <span className="font-medium text-zinc-900">{st.procedure.name}</span>
-                        {st.procedure.dependsOnDataset && (
-                          <span className="text-zinc-400">depends on {st.procedure.dependsOnDataset}</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 text-[10.5px] text-zinc-500">
-                        <span className={`rounded-full px-2 py-0.5 ${style.bg} ${style.text}`}>{style.label}</span>
-                        <span>Started {fmtDateTime(st.startTime)}</span>
-                        <span>Ended {fmtDateTime(st.endTime)}</span>
-                      </div>
-                      {(st.isBlocked ? st.blockedReason : st.note) && (
-                        <p className="w-full text-[10.5px] text-zinc-500">
-                          {st.isBlocked ? st.blockedReason : st.note}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-        )}
 
         {flagged && (
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3">
@@ -403,6 +361,65 @@ function PipelineCard({
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {expandedStage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-semibold text-zinc-900">
+                  {PIPELINE_STAGES.find((s) => s.key === expandedStage)?.label}
+                </p>
+                <p className="text-xs text-zinc-500">
+                  {states.filter((st) => st.procedure.stage === expandedStage).length} procedures · {cycleLabel} cycle
+                </p>
+              </div>
+              <button
+                onClick={() => setExpandedStage(null)}
+                className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-2">
+              {states
+                .filter((st) => st.procedure.stage === expandedStage)
+                .map((st) => {
+                  const style = STATUS_STYLE[st.status];
+                  const Icon = style.icon;
+                  const isAttention = st.status === "AWAITING_INPUT" || st.status === "FAILED";
+                  return (
+                    <div
+                      key={st.procedure.id}
+                      className={`rounded-md border px-3 py-2.5 ${isAttention ? "border-amber-200 bg-amber-50" : "border-zinc-200 bg-white"}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-zinc-900">{st.procedure.name}</span>
+                        <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${style.bg} ${style.text}`}>
+                          <Icon className={`h-3 w-3 ${st.status === "IN_PROGRESS" ? "animate-spin" : ""}`} />
+                          {style.label}
+                        </span>
+                      </div>
+                      {st.procedure.dependsOnDataset && (
+                        <p className="mt-1 text-[11px] text-zinc-500">depends on {st.procedure.dependsOnDataset}</p>
+                      )}
+                      {(st.isBlocked ? st.blockedReason : st.note) && (
+                        <p className={`mt-1 text-[11px] ${isAttention ? "text-amber-700" : "text-zinc-500"}`}>
+                          {st.isBlocked ? st.blockedReason : st.note}
+                        </p>
+                      )}
+                      <div className="mt-1.5 flex gap-3 text-[10.5px] text-zinc-400">
+                        <span>Started {fmtDateTime(st.startTime)}</span>
+                        <span>Ended {fmtDateTime(st.endTime)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           </div>
         </div>
