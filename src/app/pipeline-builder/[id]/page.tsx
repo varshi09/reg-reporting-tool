@@ -224,7 +224,7 @@ export default function PipelineCanvasPage() {
   async function handleArchivePipeline() {
     setMenuOpen(false);
     if (!structure) return;
-    if (!window.confirm(`Archive "${structure.pipelineName}"? It'll be hidden from the builder and status page. Its groups, procedures, and run history are kept — nothing is deleted.`)) return;
+    if (!window.confirm(`Mark "${structure.pipelineName}" inactive? It'll be hidden from the builder and status page. Its groups, procedures, and run history are kept — nothing is deleted.`)) return;
     await fetch(`/api/pipelines/${pipelineId}?mode=archive`, { method: "DELETE" });
     router.push("/pipeline-builder");
   }
@@ -368,7 +368,7 @@ export default function PipelineCanvasPage() {
                         className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
                       >
                         <IconArchive className="h-3.5 w-3.5" />
-                        Archive pipeline
+                        Mark inactive
                       </button>
                       <button
                         onClick={handleDeletePipeline}

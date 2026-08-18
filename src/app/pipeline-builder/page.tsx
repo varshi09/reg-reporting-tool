@@ -82,7 +82,7 @@ export default function PipelineBuilderListPage() {
 
   async function handleArchive(p: Pipeline) {
     setMenuOpenId(null);
-    if (!window.confirm(`Archive "${p.name}"? It'll be hidden from the builder and status page. Its groups, procedures, and run history are kept — nothing is deleted.`)) return;
+    if (!window.confirm(`Mark "${p.name}" inactive? It'll be hidden from the builder and status page. Its groups, procedures, and run history are kept — nothing is deleted.`)) return;
     await fetch(`/api/pipelines/${p.id}?mode=archive`, { method: "DELETE" });
     load();
   }
@@ -292,7 +292,7 @@ export default function PipelineBuilderListPage() {
                             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
                           >
                             <IconArchive className="h-3.5 w-3.5" />
-                            Archive pipeline
+                            Mark inactive
                           </button>
                           <button
                             onClick={() => handleDelete(p)}
