@@ -122,7 +122,8 @@ function PipelineCard({
           )}
         </div>
         <p className="mt-1 text-xs text-zinc-500">
-          {cycleLabel} cycle · {completedCount} of {stages.length} stages complete
+          {cycleLabel} cycle · {completedCount} of {stages.length} stages complete · started by{" "}
+          {pipeline.createdBy}
         </p>
 
         <div className="mt-3 flex items-center gap-2">
@@ -161,13 +162,12 @@ function PipelineCard({
         </div>
 
         {flagged && (
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-100 pt-3">
+          <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3">
             <span className={`flex items-center gap-1.5 text-xs ${STATUS_STYLE[flagged.status].text}`}>
               <IconAlertTriangle className="h-3.5 w-3.5" />
               {PIPELINE_STAGES.find((s) => s.key === flagged.stage)?.label} needs attention
               {flagged.note ? ` — ${flagged.note}` : ""}
             </span>
-            {flagged.updatedBy && <span className="text-xs text-zinc-400">by {flagged.updatedBy}</span>}
           </div>
         )}
       </div>
@@ -217,12 +217,6 @@ function PipelineCard({
                 <span className="text-zinc-500">Since</span>
                 <span className="text-zinc-900">{fmtDateTime(currentStage.updatedAt)}</span>
               </div>
-              {currentStage.updatedBy && (
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Updated by</span>
-                  <span className="text-zinc-900">{currentStage.updatedBy}</span>
-                </div>
-              )}
             </div>
           ) : (
             <p className="text-xs text-zinc-500">
