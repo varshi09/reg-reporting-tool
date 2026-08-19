@@ -352,12 +352,16 @@ export default function PipelineDetailPage() {
 
   // Auto-refresh, matching the reference's "Auto-refresh is on" footer note -
   // also what keeps a running group's elapsed-time display current without
-  // a separate ticking clock.
+  // a separate ticking clock. Polls fast while something is actually
+  // running (individual procedures can finish in a few seconds, so a slow
+  // poll would miss the live progress entirely) and falls back to a gentle
+  // cadence once things are idle.
+  const isRunning = running !== null || state?.overallStatus === "IN_PROGRESS";
   useEffect(() => {
     if (!Number.isFinite(pipelineId)) return;
-    const interval = setInterval(load, 20000);
+    const interval = setInterval(load, isRunning ? 2000 : 20000);
     return () => clearInterval(interval);
-  }, [pipelineId, load]);
+  }, [pipelineId, load, isRunning]);
 
   async function handleRun(mode: "next" | "all") {
     if (running) return;
