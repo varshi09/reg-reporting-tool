@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUsername } from "@/lib/auth";
 import { getAllPipelinesRunState } from "@/lib/pipelineBuilder";
+import { getPipelineHistoryStats } from "@/lib/pipelines";
 
 export async function GET(request: Request) {
   const username = await getCurrentUsername();
@@ -11,5 +12,17 @@ export async function GET(request: Request) {
   if (!timeKey) return NextResponse.json({ error: "timeKey is required." }, { status: 400 });
 
   const pipelines = await getAllPipelinesRunState(timeKey);
-  return NextResponse.json({ pipelines });
+  const historyStats = await getPipelineHistoryStats(pipelines.map((p) => p.pipelineId));
+
+  return NextResponse.json({
+    pipelines: pipelines.map((p) => ({
+      ...p,
+      ...(historyStats.get(p.pipelineId) ?? {
+        successRate: null,
+        sparkline: [],
+        avgDurationMin: null,
+        lastActivityAt: null,
+      }),
+    })),
+  });
 }

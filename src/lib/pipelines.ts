@@ -82,6 +82,97 @@ export async function withCurrentRunFlags(pipelines: Pipeline[], timeKey: string
   });
 }
 
+export type PipelineHistoryStats = {
+  successRate: number | null; // 0-100, null if no completed/failed runs yet
+  sparkline: number[]; // chronological (oldest -> newest) 1 = completed, 0 = failed
+  avgDurationMin: number | null;
+  lastActivityAt: string | null;
+};
+
+/**
+ * All-time run history stats per pipeline (not scoped to the current
+ * period, unlike withCurrentRunFlags) - the list page's success rate,
+ * trend sparkline, and "last run" timestamp need real history to be
+ * meaningful, and the current period alone is often empty early in a
+ * cycle.
+ */
+export async function getPipelineHistoryStats(
+  pipelineIds: number[]
+): Promise<Map<number, PipelineHistoryStats>> {
+  const result = new Map<number, PipelineHistoryStats>();
+  if (pipelineIds.length === 0) return result;
+
+  type Row = {
+    PIPELINE_ID: number;
+    STATUS: string;
+    START_TIME: string | null;
+    END_TIME: string | null;
+    UPDATED_AT: string;
+  };
+
+  const binds: Record<string, unknown> = {};
+  const placeholders = pipelineIds.map((id, i) => {
+    const name = `p${i}`;
+    binds[name] = id;
+    return `:${name}`;
+  });
+
+  const rows: Row[] = await withConnection(async (connection) => {
+    const r = await connection.execute<Row>(
+      `SELECT pipeline_id, status, start_time, end_time, updated_at
+       FROM (
+         SELECT pipeline_id, status, start_time, end_time, updated_at,
+                ROW_NUMBER() OVER (PARTITION BY pipeline_id ORDER BY updated_at DESC NULLS LAST) AS rn
+         FROM PIPELINE_PROCEDURE_RUNS
+         WHERE pipeline_id IN (${placeholders.join(",")})
+       ) WHERE rn <= 30
+       ORDER BY pipeline_id, updated_at DESC`,
+      binds
+    );
+    return r.rows ?? [];
+  });
+
+  const byPipeline = new Map<number, Row[]>();
+  for (const r of rows) {
+    const list = byPipeline.get(r.PIPELINE_ID) ?? [];
+    list.push(r);
+    byPipeline.set(r.PIPELINE_ID, list);
+  }
+
+  for (const id of pipelineIds) {
+    const pipelineRows = byPipeline.get(id) ?? [];
+    if (pipelineRows.length === 0) {
+      result.set(id, { successRate: null, sparkline: [], avgDurationMin: null, lastActivityAt: null });
+      continue;
+    }
+
+    const decided = pipelineRows.filter((r) => r.STATUS === "COMPLETED" || r.STATUS === "FAILED");
+    const completed = decided.filter((r) => r.STATUS === "COMPLETED");
+    const successRate = decided.length > 0 ? Math.round((completed.length / decided.length) * 100) : null;
+
+    // Rows are DESC (newest first); sparkline reads left-to-right as
+    // oldest-to-newest, so reverse the last 8 decided runs.
+    const sparkline = decided
+      .slice(0, 8)
+      .reverse()
+      .map((r) => (r.STATUS === "COMPLETED" ? 1 : 0));
+
+    const durations = completed
+      .filter((r) => r.START_TIME && r.END_TIME)
+      .map((r) => (new Date(r.END_TIME!).getTime() - new Date(r.START_TIME!).getTime()) / 60000);
+    const avgDurationMin = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
+
+    result.set(id, {
+      successRate,
+      sparkline,
+      avgDurationMin,
+      lastActivityAt: pipelineRows[0].UPDATED_AT,
+    });
+  }
+
+  return result;
+}
+
 export async function createPipeline(name: string, createdBy: string): Promise<number> {
   return withConnection(async (connection) => {
     const result = await connection.execute<{ ID: number[] }>(

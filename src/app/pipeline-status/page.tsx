@@ -1,34 +1,27 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 import { getReportingPeriod } from "@/lib/reportingPeriod";
-import { formatDateTime as fmtDT } from "@/lib/formatDateTime";
 import type { PipelineStatus } from "@/lib/pipelineStages";
-import type { PipelineRunState, GroupRunState } from "@/lib/pipelineBuilder";
+import type { PipelineRunState } from "@/lib/pipelineBuilder";
 import {
   IconCheck,
   IconLoader,
   IconAlertTriangle,
   IconCircleDashed,
   IconX,
-  IconDocument,
   IconSearch,
   IconGitBranch,
+  IconDots,
+  IconPencil,
+  IconArchive,
+  IconTrash,
 } from "@/components/icons";
 
-// ─── Color palette: mirrors the builder canvas exactly, so a status dot's
-// color always matches the group it came from ──────────────────────────────
-
-const GROUP_COLORS = [
-  { bg: "#E6F1FB", border: "#378ADD", text: "#0C447C", dot: "#185FA5" },
-  { bg: "#EEEDFE", border: "#7F77DD", text: "#3C3489", dot: "#534AB7" },
-  { bg: "#E1F5EE", border: "#1D9E75", text: "#085041", dot: "#0F6E56" },
-  { bg: "#FAECE7", border: "#D85A30", text: "#712B13", dot: "#993C1D" },
-  { bg: "#FAEEDA", border: "#EF9F27", text: "#633806", dot: "#854F0B" },
-  { bg: "#EAF3DE", border: "#97C459", text: "#27500A", dot: "#3B6D11" },
-];
+// ─── Color palette ───────────────────────────────────────────────────────────
 
 const PIPELINE_AVATAR_COLORS = [
   { bg: "#EEF2FF", text: "#4338CA" },
@@ -44,369 +37,212 @@ function avatarColor(idx: number) {
 
 // ─── Status helpers ──────────────────────────────────────────────────────────
 
-const STATUS_META: Record<
-  PipelineStatus,
-  { label: string; bg: string; text: string; borderColor: string; Icon: React.FC<{ className?: string }> }
-> = {
-  PENDING: { label: "Queued", bg: "#F4F4F5", text: "#71717A", borderColor: "#D4D4D8", Icon: IconCircleDashed },
-  IN_PROGRESS: { label: "Running", bg: "#EEF2FF", text: "#4338CA", borderColor: "#818CF8", Icon: IconLoader },
-  AWAITING_INPUT: { label: "Awaiting input", bg: "#FFFBEB", text: "#B45309", borderColor: "#FCD34D", Icon: IconAlertTriangle },
-  COMPLETED: { label: "Completed", bg: "#F0FDF4", text: "#166534", borderColor: "#86EFAC", Icon: IconCheck },
-  FAILED: { label: "Failed", bg: "#FEF2F2", text: "#991B1B", borderColor: "#FCA5A5", Icon: IconX },
+const STATUS_ICON: Record<PipelineStatus, React.FC<{ className?: string }>> = {
+  PENDING: IconCircleDashed,
+  IN_PROGRESS: IconLoader,
+  AWAITING_INPUT: IconAlertTriangle,
+  COMPLETED: IconCheck,
+  FAILED: IconX,
 };
 
-function StatusBadge({ status }: { status: PipelineStatus }) {
-  const m = STATUS_META[status];
-  const Icon = m.Icon;
-  return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-      style={{ background: m.bg, color: m.text, border: `1px solid ${m.borderColor}` }}
-    >
-      <Icon className={`h-3 w-3 ${status === "IN_PROGRESS" ? "animate-spin" : ""}`} />
-      {m.label}
-    </span>
-  );
+type RowState = PipelineRunState & {
+  successRate: number | null;
+  sparkline: number[];
+  avgDurationMin: number | null;
+  lastActivityAt: string | null;
+};
+
+type RowStatus = "inactive" | "issue" | "draft" | "running" | "active";
+
+function rowStatus(p: RowState): RowStatus {
+  if (!p.isActive) return "inactive";
+  const allProcs = p.groups.flatMap((g) => g.procedures);
+  if (allProcs.some((pr) => pr.status === "FAILED" || pr.status === "AWAITING_INPUT")) return "issue";
+  if (p.totalProcs === 0) return "draft";
+  if (allProcs.some((pr) => pr.status === "IN_PROGRESS")) return "running";
+  return "active";
 }
 
-// ─── Group stepper ───────────────────────────────────────────────────────────
+const ROW_STATUS_META: Record<RowStatus, { label: string; bg: string; text: string }> = {
+  inactive: { label: "Inactive", bg: "#F4F4F5", text: "#71717A" },
+  issue: { label: "Issue", bg: "#FFF7ED", text: "#9A3412" },
+  draft: { label: "Draft", bg: "#EEF2FF", text: "#4338CA" },
+  running: { label: "Running", bg: "#EEF2FF", text: "#4338CA" },
+  active: { label: "Active", bg: "#F0FDF4", text: "#166534" },
+};
 
-function GroupStepper({ groups }: { groups: GroupRunState[] }) {
-  if (groups.length === 0) {
+function timeAgo(dateStr: string | null): string {
+  if (!dateStr) return "No runs yet";
+  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (seconds < 60) return "Just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString();
+}
+
+function Sparkline({ points }: { points: number[] }) {
+  if (points.length < 2) {
     return (
-      <div className="flex items-center gap-2 text-xs text-zinc-400">
-        <IconGitBranch className="h-3.5 w-3.5" />
-        No groups configured — set up this pipeline in Pipeline Builder
-      </div>
+      <svg width="70" height="24" viewBox="0 0 70 24" aria-hidden="true">
+        <line x1="0" y1="12" x2="70" y2="12" stroke="#E4E4E7" strokeWidth="1.5" strokeDasharray="3 3" />
+      </svg>
     );
   }
-
+  const stepX = 70 / (points.length - 1);
+  const coords = points.map((v, i) => `${i * stepX},${v ? 6 : 18}`).join(" ");
+  const hasFailure = points.some((v) => v === 0);
   return (
-    <div className="flex items-start overflow-x-auto pb-1">
-      {groups.map((gs, idx) => {
-        const col = GROUP_COLORS[idx % GROUP_COLORS.length];
-        const m = STATUS_META[gs.groupStatus];
-        const Icon = m.Icon;
-        const completedInGroup = gs.procedures.filter((p) => p.status === "COMPLETED").length;
-        return (
-          <div key={gs.group.id} className="flex items-start">
-            <div className="flex flex-col items-center" style={{ minWidth: 84 }}>
-              <div
-                className="flex h-9 w-9 items-center justify-center rounded-full border-2"
-                style={{
-                  background: col.bg,
-                  borderColor: gs.groupStatus === "PENDING" ? "#D4D4D8" : col.border,
-                }}
-                title={`${gs.group.name}: ${m.label}`}
-              >
-                <Icon
-                  className={`h-4 w-4 ${gs.groupStatus === "IN_PROGRESS" ? "animate-spin" : ""}`}
-                  style={{ color: gs.groupStatus === "PENDING" ? "#A1A1AA" : col.dot }}
-                />
-              </div>
-              <p
-                className="mt-1.5 max-w-[80px] text-center text-[10px] font-medium leading-tight"
-                style={{ color: gs.groupStatus === "PENDING" ? "#A1A1AA" : col.text }}
-              >
-                {gs.group.name}
-              </p>
-              <span className="mt-0.5 text-[9px] text-zinc-400">
-                {completedInGroup}/{gs.procedures.length}
-              </span>
-            </div>
-            {idx < groups.length - 1 && (
-              <div
-                className="mt-[18px] h-0.5 w-8 flex-shrink-0"
-                style={{
-                  background:
-                    gs.groupStatus === "COMPLETED"
-                      ? GROUP_COLORS[idx % GROUP_COLORS.length].dot
-                      : "#E4E4E7",
-                }}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <svg width="70" height="24" viewBox="0 0 70 24" aria-hidden="true">
+      <polyline points={coords} fill="none" stroke={hasFailure ? "#BA7517" : "#639922"} strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
   );
 }
 
-// ─── Run history modal ───────────────────────────────────────────────────────
+// ─── Row ─────────────────────────────────────────────────────────────────────
 
-type HistoryEntry = {
-  id: number;
-  procedureName: string;
-  packageName: string | null;
-  dependsOnDataset: string | null;
-  status: PipelineStatus;
-  overrideType: string | null;
-  startTime: string | null;
-  endTime: string | null;
-  note: string | null;
-  updatedBy: string;
-  updatedAt: string;
-};
-
-function LogModal({
-  pipelineId,
-  pipelineName,
-  timeKey,
-  onClose,
+function PipelineRow({
+  pipeline,
+  idx,
+  onRename,
+  onArchive,
+  onReactivate,
+  onDelete,
 }: {
-  pipelineId: number;
-  pipelineName: string;
-  timeKey: string;
-  onClose: () => void;
+  pipeline: RowState;
+  idx: number;
+  onRename: (p: RowState) => void;
+  onArchive: (p: RowState) => void;
+  onReactivate: (p: RowState) => void;
+  onDelete: (p: RowState) => void;
 }) {
-  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
-
-  useEffect(() => {
-    fetch(`/api/pipelines/${pipelineId}/procedures/history?timeKey=${timeKey}`)
-      .then((r) => r.json())
-      .then((d) => setHistory(d.history ?? []));
-  }, [pipelineId, timeKey]);
+  const router = useRouter();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const av = avatarColor(idx);
+  const initial = pipeline.pipelineName.charAt(0).toUpperCase();
+  const status = rowStatus(pipeline);
+  const meta = ROW_STATUS_META[status];
+  const StatusIcon = status === "running" ? IconLoader : status === "issue" ? IconAlertTriangle : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="flex max-h-[85vh] w-full max-w-5xl flex-col rounded-xl bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold text-zinc-900">Run log — {pipelineName}</p>
-            <p className="text-xs text-zinc-500">Period: {timeKey}</p>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-          >
-            Close
-          </button>
+    <div
+      onClick={() => router.push(`/pipeline-status/${pipeline.pipelineId}`)}
+      className={`flex cursor-pointer items-center gap-4 border-b border-zinc-100 px-5 py-4 last:border-b-0 hover:bg-zinc-50 ${
+        !pipeline.isActive ? "opacity-60" : ""
+      }`}
+    >
+      <div
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-bold"
+        style={{ background: av.bg, color: av.text }}
+      >
+        {initial}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="truncate text-sm font-semibold text-zinc-900">{pipeline.pipelineName}</p>
+          {status === "issue" && <IconAlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />}
         </div>
-        <div className="flex-1 overflow-auto p-5">
-          {history === null ? (
-            <p className="text-sm text-zinc-500">Loading…</p>
-          ) : history.length === 0 ? (
-            <p className="text-sm text-zinc-500">No runs logged for this period.</p>
-          ) : (
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-zinc-200 text-zinc-500">
-                  <th className="py-2 pr-3 font-medium">Procedure</th>
-                  <th className="py-2 pr-3 font-medium">Package</th>
-                  <th className="py-2 pr-3 font-medium">Status</th>
-                  <th className="py-2 pr-3 font-medium">Started</th>
-                  <th className="py-2 pr-3 font-medium">Ended</th>
-                  <th className="py-2 pr-3 font-medium">Note</th>
-                  <th className="py-2 font-medium">By</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((h) => {
-                  const m = STATUS_META[h.status];
-                  return (
-                    <tr key={h.id} className="border-b border-zinc-50 align-top text-zinc-700">
-                      <td className="py-2 pr-3 font-medium text-zinc-900">{h.procedureName}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{h.packageName ?? "—"}</td>
-                      <td className="py-2 pr-3">
-                        <span
-                          className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-                          style={{ background: m.bg, color: m.text }}
-                        >
-                          {m.label}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-3 text-zinc-500">{fmtDT(h.startTime)}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{fmtDT(h.endTime)}</td>
-                      <td className="max-w-xs py-2 pr-3 text-zinc-600">{h.note ?? "—"}</td>
-                      <td className="py-2 text-zinc-500">{h.updatedBy}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        <p className="mt-0.5 text-xs text-zinc-400">
+          Created by {pipeline.createdBy} · Last run {timeAgo(pipeline.lastActivityAt)}
+        </p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
+            {pipeline.totalGroups} group{pipeline.totalGroups !== 1 ? "s" : ""}
+          </span>
+          <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
+            {pipeline.totalProcs} proc{pipeline.totalProcs !== 1 ? "s" : ""}
+          </span>
+          {pipeline.avgDurationMin !== null && (
+            <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
+              ~{pipeline.avgDurationMin} min
+            </span>
           )}
         </div>
       </div>
-    </div>
-  );
-}
 
-// ─── Pipeline card ────────────────────────────────────────────────────────────
+      <span
+        className="hidden shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium sm:inline-flex"
+        style={{ background: meta.bg, color: meta.text }}
+      >
+        {StatusIcon && <StatusIcon className={`h-3 w-3 ${status === "running" ? "animate-spin" : ""}`} />}
+        {meta.label}
+      </span>
 
-function PipelineCard({
-  pipeline,
-  timeKey,
-  idx,
-  isAdminUser,
-  onRefresh,
-}: {
-  pipeline: PipelineRunState;
-  timeKey: string;
-  idx: number;
-  isAdminUser: boolean;
-  onRefresh: () => void;
-}) {
-  const [showLog, setShowLog] = useState(false);
-  const [running, setRunning] = useState<"next" | "all" | null>(null);
-  const [runMsg, setRunMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  async function handleRun(mode: "next" | "all") {
-    if (running) return;
-    setRunning(mode);
-    setRunMsg(null);
-    try {
-      const res = await fetch(`/api/pipeline-status/${pipeline.pipelineId}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, timeKey }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setRunMsg({ type: "err", text: data.error ?? "Error running procedures." });
-      } else {
-        const parts: string[] = [];
-        if (data.ran?.length) parts.push(`${data.ran.length} ran`);
-        if (data.blocked?.length) parts.push(`${data.blocked.length} blocked`);
-        if (data.failed?.length) parts.push(`${data.failed.length} failed`);
-        setRunMsg({ type: data.failed?.length ? "err" : "ok", text: parts.join(", ") || "Nothing to run." });
-        onRefresh();
-      }
-    } finally {
-      setRunning(null);
-      if (msgTimer.current) clearTimeout(msgTimer.current);
-      msgTimer.current = setTimeout(() => setRunMsg(null), 5000);
-    }
-  }
-
-  const pct =
-    pipeline.totalGroups > 0
-      ? Math.round((pipeline.completedGroups / pipeline.totalGroups) * 100)
-      : 0;
-
-  const av = avatarColor(idx);
-  const initial = pipeline.pipelineName.charAt(0).toUpperCase();
-
-  const inProgressCount = pipeline.groups
-    .flatMap((g) => g.procedures)
-    .filter((p) => p.status === "IN_PROGRESS").length;
-  const awaitingCount = pipeline.groups
-    .flatMap((g) => g.procedures)
-    .filter((p) => p.status === "AWAITING_INPUT").length;
-  const failedCount = pipeline.groups
-    .flatMap((g) => g.procedures)
-    .filter((p) => p.status === "FAILED").length;
-
-  return (
-    <>
-      <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-        {/* Header row */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-5 pb-4">
-          <div className="flex items-center gap-3">
-            <div
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold"
-              style={{ background: av.bg, color: av.text }}
-            >
-              {initial}
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-zinc-900">{pipeline.pipelineName}</p>
-              <p className="text-xs text-zinc-500">
-                {pipeline.totalProcs} procedure{pipeline.totalProcs !== 1 ? "s" : ""} ·{" "}
-                {pipeline.totalGroups} group{pipeline.totalGroups !== 1 ? "s" : ""}
-              </p>
-            </div>
-            <StatusBadge status={pipeline.overallStatus} />
-          </div>
-
-          <div className="flex items-center gap-2">
-            {runMsg && (
-              <span
-                className={`text-xs font-medium ${runMsg.type === "ok" ? "text-emerald-700" : "text-red-600"}`}
-              >
-                {runMsg.text}
-              </span>
-            )}
-            <button
-              onClick={() => setShowLog(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
-            >
-              <IconDocument className="h-3.5 w-3.5" />
-              Log
-            </button>
-            {isAdminUser && pipeline.totalGroups > 0 && (
-              <>
-                <button
-                  onClick={() => handleRun("next")}
-                  disabled={running !== null || pipeline.overallStatus === "COMPLETED"}
-                  className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {running === "next" ? <IconLoader className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Run next
-                </button>
-                <button
-                  onClick={() => handleRun("all")}
-                  disabled={running !== null || pipeline.overallStatus === "COMPLETED"}
-                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {running === "all" ? <IconLoader className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Run all
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Progress bar */}
-        {pipeline.totalGroups > 0 && (
-          <div className="flex items-center gap-3 px-5 pb-4">
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-100">
-              <div
-                className="h-full rounded-full transition-all"
-                style={{
-                  width: `${pct}%`,
-                  background: pipeline.overallStatus === "FAILED" ? "#EF4444" : "#22C55E",
-                }}
-              />
-            </div>
-            <span className="shrink-0 text-xs font-medium text-zinc-500">
-              {pipeline.completedGroups}/{pipeline.totalGroups} groups
-            </span>
-          </div>
-        )}
-
-        {/* Group stepper */}
-        <div className="border-t border-zinc-100 px-5 py-4">
-          <GroupStepper groups={pipeline.groups} />
-        </div>
-
-        {/* Attention banner */}
-        {(awaitingCount > 0 || failedCount > 0) && (
-          <div
-            className="mx-5 mb-4 flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
-            style={{
-              background: failedCount > 0 ? "#FEF2F2" : "#FFFBEB",
-              color: failedCount > 0 ? "#991B1B" : "#92400E",
-            }}
-          >
-            <IconAlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            {failedCount > 0
-              ? `${failedCount} procedure${failedCount !== 1 ? "s" : ""} failed`
-              : `${awaitingCount} procedure${awaitingCount !== 1 ? "s" : ""} awaiting upload approval`}
-            {inProgressCount > 0 && ` · ${inProgressCount} running`}
-          </div>
-        )}
+      <div className="hidden shrink-0 md:block">
+        <Sparkline points={pipeline.sparkline} />
       </div>
 
-      {showLog && (
-        <LogModal
-          pipelineId={pipeline.pipelineId}
-          pipelineName={pipeline.pipelineName}
-          timeKey={timeKey}
-          onClose={() => setShowLog(false)}
-        />
-      )}
-    </>
+      <div className="hidden w-16 shrink-0 text-right sm:block">
+        <p
+          className="text-sm font-semibold"
+          style={{
+            color:
+              pipeline.successRate === null
+                ? "#A1A1AA"
+                : pipeline.successRate >= 90
+                  ? "#16A34A"
+                  : pipeline.successRate >= 70
+                    ? "#D97706"
+                    : "#DC2626",
+          }}
+        >
+          {pipeline.successRate === null ? "—" : `${pipeline.successRate}%`}
+        </p>
+        <p className="text-[10px] text-zinc-400">success</p>
+      </div>
+
+      <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={() => setMenuOpen((v) => !v)}
+          className="rounded-lg p-1.5 text-zinc-300 hover:bg-zinc-100 hover:text-zinc-600"
+          aria-label="Pipeline options"
+        >
+          <IconDots className="h-4 w-4" />
+        </button>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+            <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
+              <button
+                onClick={() => { setMenuOpen(false); onRename(pipeline); }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+              >
+                <IconPencil className="h-3.5 w-3.5" />
+                Rename
+              </button>
+              {pipeline.isActive ? (
+                <button
+                  onClick={() => { setMenuOpen(false); onArchive(pipeline); }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+                >
+                  <IconArchive className="h-3.5 w-3.5" />
+                  Mark inactive
+                </button>
+              ) : (
+                <button
+                  onClick={() => { setMenuOpen(false); onReactivate(pipeline); }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-emerald-700 hover:bg-emerald-50"
+                >
+                  <IconCheck className="h-3.5 w-3.5" />
+                  Reactivate
+                </button>
+              )}
+              <button
+                onClick={() => { setMenuOpen(false); onDelete(pipeline); }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50"
+              >
+                <IconTrash className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -414,32 +250,23 @@ function PipelineCard({
 
 export default function PipelineStatusPage() {
   const { checked, username } = useRequireAuth();
-  const [pipelines, setPipelines] = useState<PipelineRunState[]>([]);
-  const [isAdminUser, setIsAdminUser] = useState(false);
+  const [pipelines, setPipelines] = useState<RowState[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState<"all" | PipelineStatus>("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | RowStatus>("all");
+
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   const period = getReportingPeriod();
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [statusRes, usersRes, meRes] = await Promise.all([
-      fetch(`/api/pipeline-status?timeKey=${period.timeKey}`),
-      fetch("/api/users"),
-      fetch("/api/auth/me"),
-    ]);
-    if (statusRes.ok) {
-      const data = await statusRes.json();
+    const res = await fetch(`/api/pipeline-status?timeKey=${period.timeKey}`);
+    if (res.ok) {
+      const data = await res.json();
       setPipelines(data.pipelines ?? []);
-    }
-    if (usersRes.ok && meRes.ok) {
-      const users = await usersRes.json();
-      const me = await meRes.json();
-      const match = users.users?.find(
-        (u: { username: string; isAdmin: boolean }) => u.username === me.username
-      );
-      setIsAdminUser(match?.isAdmin ?? false);
     }
     setLoading(false);
   }, [period.timeKey]);
@@ -451,45 +278,87 @@ export default function PipelineStatusPage() {
 
   if (!checked) return null;
 
-  const allProcs = pipelines.flatMap((p) => p.groups.flatMap((g) => g.procedures));
+  async function handleArchive(p: RowState) {
+    if (!window.confirm(`Mark "${p.pipelineName}" inactive? It'll be hidden from active monitoring, but nothing is deleted.`)) return;
+    await fetch(`/api/pipelines/${p.pipelineId}?mode=archive`, { method: "DELETE" });
+    load();
+  }
+
+  async function handleReactivate(p: RowState) {
+    await fetch(`/api/pipelines/${p.pipelineId}?mode=reactivate`, { method: "PATCH" });
+    load();
+  }
+
+  async function handleDelete(p: RowState) {
+    if (
+      !window.confirm(
+        `Permanently delete "${p.pipelineName}"? This removes its groups, procedures, and ALL run history. This cannot be undone.`
+      )
+    )
+      return;
+    await fetch(`/api/pipelines/${p.pipelineId}?mode=delete`, { method: "DELETE" });
+    load();
+  }
+
+  function openRename(p: RowState) {
+    setRenamingId(p.pipelineId);
+    setRenameValue(p.pipelineName);
+    setRenameError(null);
+  }
+
+  async function handleRenameSave(p: RowState) {
+    const name = renameValue.trim();
+    if (!name || name === p.pipelineName) {
+      setRenamingId(null);
+      return;
+    }
+    setRenameError(null);
+    const res = await fetch(`/api/pipelines/${p.pipelineId}?mode=rename`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setRenameError(data.error ?? "Couldn't rename.");
+      return;
+    }
+    setRenamingId(null);
+    load();
+  }
+
+  const activePipelines = pipelines.filter((p) => p.isActive);
   const stats = {
-    total: allProcs.length,
-    completed: allProcs.filter((p) => p.status === "COMPLETED").length,
-    inProgress: allProcs.filter((p) => p.status === "IN_PROGRESS").length,
-    awaiting: allProcs.filter((p) => p.status === "AWAITING_INPUT").length,
-    failed: allProcs.filter((p) => p.status === "FAILED").length,
+    total: pipelines.length,
+    active: activePipelines.length,
+    inProgress: activePipelines.filter((p) => rowStatus(p) === "running").length,
+    withIssues: activePipelines.filter((p) => rowStatus(p) === "issue").length,
   };
 
   const visible = pipelines.filter((p) => {
     const matchSearch = p.pipelineName.toLowerCase().includes(search.toLowerCase());
-    const matchStatus =
-      filterStatus === "all" ||
-      p.overallStatus === filterStatus ||
-      (filterStatus === "PENDING" && p.totalGroups === 0);
+    const matchStatus = filterStatus === "all" || rowStatus(p) === filterStatus;
     return matchSearch && matchStatus;
   });
 
   const statCards = [
-    { label: "Total procedures", value: stats.total, color: "#4F46E5", bg: "#EEF2FF" },
-    { label: "Completed", value: stats.completed, color: "#16A34A", bg: "#F0FDF4" },
-    { label: "In progress", value: stats.inProgress, color: "#7C3AED", bg: "#F5F3FF" },
-    { label: "Awaiting input", value: stats.awaiting, color: "#D97706", bg: "#FFFBEB" },
-    { label: "Failed", value: stats.failed, color: "#DC2626", bg: "#FEF2F2" },
+    { label: "Total pipelines", value: stats.total, color: "#4F46E5" },
+    { label: "Active pipelines", value: stats.active, color: "#16A34A" },
+    { label: "In progress", value: stats.inProgress, color: "#4338CA" },
+    { label: "With issues", value: stats.withIssues, color: "#D97706" },
   ];
 
   return (
     <AppShell active="/pipeline-status" title="Pipeline Status">
       <div className="flex max-w-5xl flex-col gap-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <p className="text-sm text-zinc-500">
-            Procedure-by-procedure status for each pipeline · current reporting cycle
-          </p>
+          <p className="text-sm text-zinc-500">Live status for every configured pipeline.</p>
           <span className="inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
             Period: {period.periodLabel}
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {statCards.map((c) => (
             <div key={c.label} className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
               <p className="text-2xl font-bold" style={{ color: c.color }}>
@@ -510,22 +379,23 @@ export default function PipelineStatusPage() {
               className="h-9 w-full rounded-lg border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder-zinc-400 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
             />
           </div>
-          <div className="flex rounded-lg border border-zinc-200 bg-white text-xs font-medium">
+          <div className="flex flex-wrap rounded-lg border border-zinc-200 bg-white text-xs font-medium">
             {(
               [
                 { key: "all", label: "All" },
-                { key: "COMPLETED", label: "Completed" },
-                { key: "IN_PROGRESS", label: "Running" },
-                { key: "AWAITING_INPUT", label: "Awaiting" },
-                { key: "FAILED", label: "Failed" },
-              ] as { key: "all" | PipelineStatus; label: string }[]
-            ).map((f, i, arr) => (
+                { key: "active", label: "Active" },
+                { key: "running", label: "Running" },
+                { key: "issue", label: "Issue" },
+                { key: "draft", label: "Draft" },
+                { key: "inactive", label: "Inactive" },
+              ] as { key: "all" | RowStatus; label: string }[]
+            ).map((f) => (
               <button
                 key={f.key}
                 onClick={() => setFilterStatus(f.key)}
-                className={`px-3 py-1.5 transition-colors ${i === 0 ? "rounded-l-lg" : ""} ${
-                  i === arr.length - 1 ? "rounded-r-lg" : ""
-                } ${filterStatus === f.key ? "bg-indigo-600 text-white" : "text-zinc-600 hover:bg-zinc-50"}`}
+                className={`px-3 py-1.5 first:rounded-l-lg last:rounded-r-lg transition-colors ${
+                  filterStatus === f.key ? "bg-indigo-600 text-white" : "text-zinc-600 hover:bg-zinc-50"
+                }`}
               >
                 {f.label}
               </button>
@@ -546,17 +416,43 @@ export default function PipelineStatusPage() {
             </p>
           </div>
         ) : (
-          <div className="flex flex-col gap-4">
-            {visible.map((p, idx) => (
-              <PipelineCard
-                key={p.pipelineId}
-                pipeline={p}
-                timeKey={period.timeKey}
-                idx={idx}
-                isAdminUser={isAdminUser}
-                onRefresh={load}
-              />
-            ))}
+          <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+            {visible.map((p, idx) =>
+              renamingId === p.pipelineId ? (
+                <div key={p.pipelineId} className="flex items-center gap-2 border-b border-zinc-100 px-5 py-4 last:border-b-0">
+                  <input
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleRenameSave(p)}
+                    autoFocus
+                    className="flex-1 rounded-md border border-indigo-300 px-2 py-1 text-sm font-semibold text-zinc-900 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+                  />
+                  <button
+                    onClick={() => handleRenameSave(p)}
+                    className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => { setRenamingId(null); setRenameError(null); }}
+                    className="rounded-md border border-zinc-200 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50"
+                  >
+                    Cancel
+                  </button>
+                  {renameError && <p className="text-xs text-red-600">{renameError}</p>}
+                </div>
+              ) : (
+                <PipelineRow
+                  key={p.pipelineId}
+                  pipeline={p}
+                  idx={idx}
+                  onRename={openRename}
+                  onArchive={handleArchive}
+                  onReactivate={handleReactivate}
+                  onDelete={handleDelete}
+                />
+              )
+            )}
           </div>
         )}
 

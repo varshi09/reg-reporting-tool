@@ -29,6 +29,8 @@ export type PipelineStructure = {
   pipelineId: number;
   pipelineName: string;
   isActive: boolean;
+  createdBy: string;
+  createdAt: string;
   groups: Array<PipelineGroup & { procedures: GroupProcedure[] }>;
 };
 
@@ -43,7 +45,7 @@ export type CatalogProcedure = {
 // ─── Read ──────────────────────────────────────────────────────────────────
 
 export async function getPipelineStructure(pipelineId: number): Promise<PipelineStructure | null> {
-  type PipelineRow = { ID: number; NAME: string; IS_ACTIVE: number };
+  type PipelineRow = { ID: number; NAME: string; IS_ACTIVE: number; CREATED_BY: string; CREATED_AT: string };
   type GroupRow = {
     ID: number; PIPELINE_ID: number; NAME: string;
     SORT_ORDER: number; EXEC_MODE: string;
@@ -59,7 +61,7 @@ export async function getPipelineStructure(pipelineId: number): Promise<Pipeline
 
   return withConnection(async (connection) => {
     const pipeRes = await connection.execute<PipelineRow>(
-      `SELECT id, name, is_active FROM PIPELINES WHERE id = :id`,
+      `SELECT id, name, is_active, created_by, created_at FROM PIPELINES WHERE id = :id`,
       { id: pipelineId }
     );
     const pipeline = pipeRes.rows?.[0];
@@ -110,6 +112,8 @@ export async function getPipelineStructure(pipelineId: number): Promise<Pipeline
       pipelineId: pipeline.ID,
       pipelineName: pipeline.NAME,
       isActive: pipeline.IS_ACTIVE === 1,
+      createdBy: pipeline.CREATED_BY,
+      createdAt: pipeline.CREATED_AT,
       groups,
     };
   });
@@ -411,6 +415,9 @@ export type GroupRunState = {
 export type PipelineRunState = {
   pipelineId: number;
   pipelineName: string;
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
   timeKey: string;
   groups: GroupRunState[];
   overallStatus: PipelineStatus;
@@ -528,6 +535,9 @@ export async function getPipelineRunState(
   return {
     pipelineId: structure.pipelineId,
     pipelineName: structure.pipelineName,
+    isActive: structure.isActive,
+    createdBy: structure.createdBy,
+    createdAt: structure.createdAt,
     timeKey,
     groups,
     overallStatus: computeGroupStatus(groups.map((g) => g.groupStatus)),
@@ -541,7 +551,7 @@ export async function getPipelineRunState(
 export async function getAllPipelinesRunState(timeKey: string): Promise<PipelineRunState[]> {
   type PipelineRow = { ID: number };
   const pipelines = await withConnection(async (conn) => {
-    const r = await conn.execute<PipelineRow>(`SELECT id FROM PIPELINES WHERE is_active = 1 ORDER BY id`);
+    const r = await conn.execute<PipelineRow>(`SELECT id FROM PIPELINES ORDER BY id`);
     return r.rows ?? [];
   });
   const states = await Promise.all(pipelines.map((p) => getPipelineRunState(p.ID, timeKey)));
