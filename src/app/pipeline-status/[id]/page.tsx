@@ -658,32 +658,38 @@ export default function PipelineDetailPage() {
           {/* Recent activity */}
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
             <p className="mb-3 text-sm font-semibold text-zinc-900">Recent activity</p>
-            {history.length === 0 ? (
-              <p className="text-xs text-zinc-500">No activity yet.</p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {history.slice(0, 6).map((h) => {
-                  const m = STATUS_META[h.status];
-                  const Icon = m.Icon;
-                  return (
-                    <div key={h.id} className="flex items-start gap-2">
-                      <span
-                        className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
-                        style={{ background: m.bg, color: m.text }}
-                      >
-                        <Icon className={`h-3 w-3 ${h.status === "IN_PROGRESS" ? "animate-spin" : ""}`} />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium text-zinc-800">{activityPhrase(h)}</p>
-                        <p className="text-[10px] text-zinc-400">
-                          {fmtDT(h.updatedAt)} · by {h.updatedBy}
-                        </p>
+            {(() => {
+              // "Started" entries are superseded moments later by the same
+              // run's completed/failed row, so they're just noise once a
+              // step is done - only show the last 5 real status changes.
+              const recent = history.filter((h) => h.status !== "IN_PROGRESS").slice(0, 5);
+              return recent.length === 0 ? (
+                <p className="text-xs text-zinc-500">No activity yet.</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {recent.map((h) => {
+                    const m = STATUS_META[h.status];
+                    const Icon = m.Icon;
+                    return (
+                      <div key={h.id} className="flex items-start gap-2">
+                        <span
+                          className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                          style={{ background: m.bg, color: m.text }}
+                        >
+                          <Icon className="h-3 w-3" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-medium text-zinc-800">{activityPhrase(h)}</p>
+                          <p className="text-[10px] text-zinc-400">
+                            {fmtDT(h.updatedAt)} · by {h.updatedBy}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
