@@ -242,7 +242,6 @@ export default function PipelineStatusPage() {
   const period = getReportingPeriod();
 
   const load = useCallback(async () => {
-    setLoading(true);
     const res = await fetch(`/api/pipeline-status?timeKey=${period.timeKey}`);
     if (res.ok) {
       const data = await res.json();
@@ -254,6 +253,16 @@ export default function PipelineStatusPage() {
   useEffect(() => {
     if (!checked) return;
     load();
+  }, [checked, load]);
+
+  // Background poll so statuses update without a manual page refresh. Never
+  // flips `loading` back to true - that would blank the whole list on every
+  // tick, so only the very first load (loading's initial state) shows the
+  // spinner; refreshes after that just swap the row data in silently.
+  useEffect(() => {
+    if (!checked) return;
+    const interval = setInterval(load, 20000);
+    return () => clearInterval(interval);
   }, [checked, load]);
 
   if (!checked) return null;
@@ -332,7 +341,7 @@ export default function PipelineStatusPage() {
     <AppShell active="/pipeline-status" title="Pipeline Status">
       <div className="flex max-w-5xl flex-col gap-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <p className="text-sm text-zinc-500">Live status for every configured pipeline.</p>
+          <p className="text-sm text-zinc-500">Live status for every configured pipeline · auto-refreshes every 20s</p>
           <span className="inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
             Period: {period.periodLabel}
           </span>
