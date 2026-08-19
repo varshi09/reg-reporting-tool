@@ -133,7 +133,47 @@ export default function PipelineCanvasPage() {
   const [pipelineNameValue, setPipelineNameValue] = useState("");
   const [pipelineRenameError, setPipelineRenameError] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
   const dragPayload = useRef<DragPayload | null>(null);
+  const dragScrollDirection = useRef<"up" | "down" | null>(null);
+
+  // Native browser auto-scroll during HTML5 drag-and-drop is unreliable for
+  // page-level scrolling (as opposed to a scrollable div), so this drives it
+  // manually: track how close the pointer is to the viewport edge on every
+  // dragover (capture phase, so it still sees the event even though some
+  // drop-zone handlers below call stopPropagation), then scroll continuously
+  // via rAF for as long as it stays there.
+  useEffect(() => {
+    const EDGE = 100;
+    const SPEED = 16;
+    let rafId: number;
+
+    function tick() {
+      if (dragScrollDirection.current === "up") window.scrollBy(0, -SPEED);
+      else if (dragScrollDirection.current === "down") window.scrollBy(0, SPEED);
+      rafId = requestAnimationFrame(tick);
+    }
+    rafId = requestAnimationFrame(tick);
+
+    function handleDragOver(e: DragEvent) {
+      if (e.clientY < EDGE) dragScrollDirection.current = "up";
+      else if (e.clientY > window.innerHeight - EDGE) dragScrollDirection.current = "down";
+      else dragScrollDirection.current = null;
+    }
+    function stopScrolling() {
+      dragScrollDirection.current = null;
+    }
+
+    document.addEventListener("dragover", handleDragOver, true);
+    document.addEventListener("dragend", stopScrolling, true);
+    document.addEventListener("drop", stopScrolling, true);
+    return () => {
+      cancelAnimationFrame(rafId);
+      document.removeEventListener("dragover", handleDragOver, true);
+      document.removeEventListener("dragend", stopScrolling, true);
+      document.removeEventListener("drop", stopScrolling, true);
+    };
+  }, []);
 
   const load = useCallback(async () => {
     const [structRes, catRes] = await Promise.all([
@@ -420,11 +460,14 @@ export default function PipelineCanvasPage() {
                 Preview
               </button>
               <button
-                onClick={() => router.push("/pipeline-builder")}
+                onClick={() => {
+                  setJustSaved(true);
+                  setTimeout(() => setJustSaved(false), 2000);
+                }}
                 className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
               >
-                <IconSave className="h-3.5 w-3.5" />
-                Save pipeline
+                {justSaved ? <IconCheck className="h-3.5 w-3.5" /> : <IconSave className="h-3.5 w-3.5" />}
+                {justSaved ? "Saved" : "Save pipeline"}
               </button>
               <div className="relative">
                 <button
