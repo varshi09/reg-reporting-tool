@@ -24,7 +24,6 @@ export async function GET(
   if (!state) return NextResponse.json({ error: "Pipeline not found." }, { status: 404 });
 
   const historyStats = (await getPipelineHistoryStats([pipelineId])).get(pipelineId) ?? {
-    successRate: null,
     sparkline: [],
     avgDurationMin: null,
     lastActivityAt: null,

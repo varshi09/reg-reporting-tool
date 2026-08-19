@@ -277,7 +277,6 @@ function activityPhrase(h: HistoryEntry): string {
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 type DetailState = PipelineRunState & {
-  successRate: number | null;
   sparkline: number[];
   avgDurationMin: number | null;
   lastActivityAt: string | null;

@@ -83,7 +83,6 @@ export async function withCurrentRunFlags(pipelines: Pipeline[], timeKey: string
 }
 
 export type PipelineHistoryStats = {
-  successRate: number | null; // 0-100, null if no completed/failed runs yet
   sparkline: number[]; // chronological (oldest -> newest) 1 = completed, 0 = failed
   avgDurationMin: number | null;
   lastActivityAt: string | null;
@@ -91,10 +90,9 @@ export type PipelineHistoryStats = {
 
 /**
  * All-time run history stats per pipeline (not scoped to the current
- * period, unlike withCurrentRunFlags) - the list page's success rate,
- * trend sparkline, and "last run" timestamp need real history to be
- * meaningful, and the current period alone is often empty early in a
- * cycle.
+ * period, unlike withCurrentRunFlags) - the list page's trend sparkline
+ * and "last run" timestamp need real history to be meaningful, and the
+ * current period alone is often empty early in a cycle.
  */
 export async function getPipelineHistoryStats(
   pipelineIds: number[]
@@ -142,13 +140,12 @@ export async function getPipelineHistoryStats(
   for (const id of pipelineIds) {
     const pipelineRows = byPipeline.get(id) ?? [];
     if (pipelineRows.length === 0) {
-      result.set(id, { successRate: null, sparkline: [], avgDurationMin: null, lastActivityAt: null });
+      result.set(id, { sparkline: [], avgDurationMin: null, lastActivityAt: null });
       continue;
     }
 
     const decided = pipelineRows.filter((r) => r.STATUS === "COMPLETED" || r.STATUS === "FAILED");
     const completed = decided.filter((r) => r.STATUS === "COMPLETED");
-    const successRate = decided.length > 0 ? Math.round((completed.length / decided.length) * 100) : null;
 
     // Rows are DESC (newest first); sparkline reads left-to-right as
     // oldest-to-newest, so reverse the last 8 decided runs.
@@ -163,7 +160,6 @@ export async function getPipelineHistoryStats(
     const avgDurationMin = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
 
     result.set(id, {
-      successRate,
       sparkline,
       avgDurationMin,
       lastActivityAt: pipelineRows[0].UPDATED_AT,

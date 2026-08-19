@@ -18,7 +18,6 @@ export async function GET(request: Request) {
     pipelines: pipelines.map((p) => ({
       ...p,
       ...(historyStats.get(p.pipelineId) ?? {
-        successRate: null,
         sparkline: [],
         avgDurationMin: null,
         lastActivityAt: null,

@@ -46,7 +46,6 @@ const STATUS_ICON: Record<PipelineStatus, React.FC<{ className?: string }>> = {
 };
 
 type RowState = PipelineRunState & {
-  successRate: number | null;
   sparkline: number[];
   avgDurationMin: number | null;
   lastActivityAt: string | null;
@@ -174,25 +173,6 @@ function PipelineRow({
 
       <div className="hidden shrink-0 md:block">
         <Sparkline points={pipeline.sparkline} />
-      </div>
-
-      <div className="hidden w-16 shrink-0 text-right sm:block">
-        <p
-          className="text-sm font-semibold"
-          style={{
-            color:
-              pipeline.successRate === null
-                ? "#A1A1AA"
-                : pipeline.successRate >= 90
-                  ? "#16A34A"
-                  : pipeline.successRate >= 70
-                    ? "#D97706"
-                    : "#DC2626",
-          }}
-        >
-          {pipeline.successRate === null ? "—" : `${pipeline.successRate}%`}
-        </p>
-        <p className="text-[10px] text-zinc-400">success</p>
       </div>
 
       <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
