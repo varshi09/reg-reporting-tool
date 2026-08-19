@@ -439,6 +439,21 @@ export default function PipelineDetailPage() {
   const currentGroupRunning = currentGroup?.procedures.find((p) => p.status === "IN_PROGRESS");
   const currentGroupStarted = currentGroupRunning?.startTime ?? null;
 
+  // Mirrors the backend's overrideBlockedProcedure() guard: an override may
+  // only unstick the procedure actually next in line - the current group,
+  // and (for a SEQUENTIAL group) the first not-yet-completed procedure in
+  // sort order - never a later one, so overriding can't jump the queue.
+  function canOverride(gs: GroupRunState, p: GroupRunState["procedures"][number]): boolean {
+    if (!p.isBlocked) return false;
+    const targetGroup = state!.groups.find((g) => g.groupStatus !== "COMPLETED");
+    if (!targetGroup || targetGroup.group.id !== gs.group.id) return false;
+    if (gs.group.execMode === "SEQUENTIAL") {
+      const firstIncomplete = gs.procedures.find((x) => x.status !== "COMPLETED");
+      return firstIncomplete?.proc.procedureId === p.proc.procedureId;
+    }
+    return true;
+  }
+
   return (
     <AppShell active="/pipeline-status" title="Pipeline Status">
       <div className="flex max-w-5xl flex-col gap-5">
@@ -756,7 +771,11 @@ export default function PipelineDetailPage() {
                         {p.isBlocked && p.blockedReason && (
                           <div className="ml-6 mt-1">
                             <p className="text-[10px] text-amber-700">{p.blockedReason}</p>
-                            {overridingProcId === p.proc.procedureId ? (
+                            {!canOverride(gs, p) ? (
+                              <p className="mt-1 text-[10px] text-zinc-400">
+                                Will become available to override once earlier procedures in the sequence complete
+                              </p>
+                            ) : overridingProcId === p.proc.procedureId ? (
                               <div className="mt-1.5 flex flex-col gap-1.5">
                                 <textarea
                                   value={overrideNote}

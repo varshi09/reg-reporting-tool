@@ -625,7 +625,12 @@ async function runGroupProcedure(
  * it done, for cases where the upstream data genuinely isn't coming through
  * UPLOAD_LOG (e.g. a manual/offline source) but the pipeline still needs to
  * proceed. Refuses anything that isn't actually blocked right now, so this
- * can't be used as a generic "mark complete" backdoor.
+ * can't be used as a generic "mark complete" backdoor - and, just as
+ * importantly, refuses anything that isn't the procedure actually next in
+ * line: the pipeline's group order and each SEQUENTIAL group's own sort
+ * order must still be honored, so an override can only ever unstick the one
+ * procedure currently blocking forward progress, never let a later one jump
+ * the queue.
  */
 export async function overrideBlockedProcedure(
   pipelineId: number,
@@ -637,9 +642,21 @@ export async function overrideBlockedProcedure(
   const state = await getPipelineRunState(pipelineId, timeKey);
   if (!state) return { ok: false, error: "Pipeline not found." };
 
-  const procState = state.groups.flatMap((g) => g.procedures).find((p) => p.proc.procedureId === procedureId);
-  if (!procState) return { ok: false, error: "Procedure not found in this pipeline." };
+  const groupState = state.groups.find((g) => g.procedures.some((p) => p.proc.procedureId === procedureId));
+  const procState = groupState?.procedures.find((p) => p.proc.procedureId === procedureId);
+  if (!groupState || !procState) return { ok: false, error: "Procedure not found in this pipeline." };
   if (!procState.isBlocked) return { ok: false, error: "This procedure is not currently blocked." };
+
+  const targetGroup = state.groups.find((g) => g.groupStatus !== "COMPLETED");
+  if (!targetGroup || targetGroup.group.id !== groupState.group.id) {
+    return { ok: false, error: "This procedure isn't next in the pipeline's sequence yet." };
+  }
+  if (targetGroup.group.execMode === "SEQUENTIAL") {
+    const firstIncomplete = targetGroup.procedures.find((p) => p.status !== "COMPLETED");
+    if (!firstIncomplete || firstIncomplete.proc.procedureId !== procedureId) {
+      return { ok: false, error: "This procedure isn't next in its group's sequence yet." };
+    }
+  }
 
   await withConnection((conn) =>
     conn.execute(
