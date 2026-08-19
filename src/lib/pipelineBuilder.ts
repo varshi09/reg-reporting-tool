@@ -155,8 +155,8 @@ export async function getCatalogProcedures(): Promise<CatalogProcedure[]> {
          ON (tgt.package_name = src.package_name AND tgt.procedure_name = src.procedure_name)
          WHEN MATCHED THEN UPDATE SET
            takes_date_param = :takesDateParam, takes_scope_param = :takesScopeParam
-         WHEN NOT MATCHED THEN INSERT (procedure_name, package_name, stage, takes_date_param, takes_scope_param, created_by)
-           VALUES (:procedureName, :packageName, 'SOURCE_LOADED', :takesDateParam, :takesScopeParam, 'system-sync')`,
+         WHEN NOT MATCHED THEN INSERT (procedure_name, package_name, takes_date_param, takes_scope_param, created_by)
+           VALUES (:procedureName, :packageName, :takesDateParam, :takesScopeParam, 'system-sync')`,
         {
           packageName: row.PACKAGE_NAME,
           procedureName: row.PROCEDURE_NAME,
