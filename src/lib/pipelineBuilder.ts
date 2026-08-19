@@ -620,6 +620,20 @@ async function runGroupProcedure(
   }
 }
 
+/**
+ * A SEQUENTIAL group must honor sort order strictly: the next procedure to
+ * run is the first one (in order) that isn't already COMPLETED. If *that*
+ * one is blocked or still IN_PROGRESS, the group cannot advance - it is
+ * wrong to skip past it and run a later procedure just because the later
+ * one happens not to be blocked.
+ */
+function nextSequentialProcedure(procedures: ProcRunState[]): { proc: ProcRunState | null; canProceed: boolean } {
+  const next = procedures.find((p) => p.status !== "COMPLETED");
+  if (!next) return { proc: null, canProceed: true }; // group already fully complete
+  if (next.isBlocked || next.status === "IN_PROGRESS") return { proc: null, canProceed: false };
+  return { proc: next, canProceed: true };
+}
+
 export async function runNextInPipeline(
   pipelineId: number,
   timeKey: string,
@@ -635,12 +649,11 @@ export async function runNextInPipeline(
   const blocked: string[] = [];
   const failed: string[] = [];
 
-  const eligible = targetGroup.procedures.filter(
-    (p) => p.status !== "COMPLETED" && p.status !== "IN_PROGRESS" && !p.isBlocked
-  );
-  targetGroup.procedures.filter((p) => p.isBlocked).forEach((p) => blocked.push(p.proc.procedureName));
-
   if (targetGroup.group.execMode === "PARALLEL") {
+    const eligible = targetGroup.procedures.filter(
+      (p) => p.status !== "COMPLETED" && p.status !== "IN_PROGRESS" && !p.isBlocked
+    );
+    targetGroup.procedures.filter((p) => p.isBlocked).forEach((p) => blocked.push(p.proc.procedureName));
     const results = await Promise.all(
       eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy))
     );
@@ -649,8 +662,11 @@ export async function runNextInPipeline(
       else failed.push(p.proc.procedureName);
     });
   } else {
-    const next = eligible[0];
-    if (next) {
+    const { proc: next, canProceed } = nextSequentialProcedure(targetGroup.procedures);
+    if (!canProceed) {
+      const stuck = targetGroup.procedures.find((p) => p.status !== "COMPLETED");
+      if (stuck) blocked.push(stuck.proc.procedureName);
+    } else if (next) {
       const result = await runGroupProcedure(pipelineId, next.proc, timeKey, triggeredBy);
       if (result.status === "COMPLETED") ran.push(next.proc.procedureName);
       else failed.push(next.proc.procedureName);
@@ -679,26 +695,56 @@ export async function runAllInPipeline(
     const groupState = freshState.groups.find((g) => g.group.id === group.id);
     if (!groupState || groupState.groupStatus === "COMPLETED") continue;
 
-    const eligible = groupState.procedures.filter(
-      (p) => p.status !== "COMPLETED" && p.status !== "IN_PROGRESS" && !p.isBlocked
-    );
-    groupState.procedures.filter((p) => p.isBlocked).forEach((p) => allBlocked.push(p.proc.procedureName));
+    // A group that can't fully complete this pass (blocked, or a failure
+    // partway through) must stop the whole run right there - later groups
+    // are not started until this one is actually done, not just attempted.
+    let groupBlockedOrFailed = false;
 
     if (group.execMode === "PARALLEL") {
+      const eligible = groupState.procedures.filter(
+        (p) => p.status !== "COMPLETED" && p.status !== "IN_PROGRESS" && !p.isBlocked
+      );
+      groupState.procedures.filter((p) => p.isBlocked).forEach((p) => {
+        allBlocked.push(p.proc.procedureName);
+        groupBlockedOrFailed = true;
+      });
       const results = await Promise.all(
         eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy))
       );
       eligible.forEach((p, i) => {
         if (results[i].status === "COMPLETED") allRan.push(p.proc.procedureName);
-        else allFailed.push(p.proc.procedureName);
+        else { allFailed.push(p.proc.procedureName); groupBlockedOrFailed = true; }
       });
     } else {
-      for (const p of eligible) {
-        const result = await runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy);
-        if (result.status === "COMPLETED") allRan.push(p.proc.procedureName);
-        else { allFailed.push(p.proc.procedureName); break; }
+      // Walk procedures in order, one at a time, re-deriving what's next
+      // after each run so a fresh block (or the next procedure's own
+      // dependency) is caught immediately rather than assuming the
+      // pre-fetched eligibility list is still accurate.
+      let procedures = groupState.procedures;
+      for (;;) {
+        const { proc: next, canProceed } = nextSequentialProcedure(procedures);
+        if (!canProceed) {
+          const stuck = procedures.find((p) => p.status !== "COMPLETED");
+          if (stuck) allBlocked.push(stuck.proc.procedureName);
+          groupBlockedOrFailed = true;
+          break;
+        }
+        if (!next) break; // group fully complete
+        const result = await runGroupProcedure(pipelineId, next.proc, timeKey, triggeredBy);
+        if (result.status === "COMPLETED") {
+          allRan.push(next.proc.procedureName);
+          procedures = procedures.map((p) =>
+            p.proc.pipelineProcedureId === next.proc.pipelineProcedureId ? { ...p, status: "COMPLETED" as const } : p
+          );
+        } else {
+          allFailed.push(next.proc.procedureName);
+          groupBlockedOrFailed = true;
+          break;
+        }
       }
     }
+
+    if (groupBlockedOrFailed) break;
   }
 
   return { ran: allRan, blocked: allBlocked, failed: allFailed };
