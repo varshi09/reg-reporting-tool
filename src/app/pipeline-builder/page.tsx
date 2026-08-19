@@ -15,6 +15,7 @@ import {
   IconDots,
   IconArchive,
   IconTrash,
+  IconCheck,
 } from "@/components/icons";
 import type { Pipeline } from "@/lib/pipelines";
 
@@ -94,15 +95,22 @@ export default function PipelineBuilderListPage() {
     load();
   }
 
+  async function handleReactivate(p: Pipeline) {
+    setMenuOpenId(null);
+    await fetch(`/api/pipelines/${p.id}?mode=reactivate`, { method: "PATCH" });
+    load();
+  }
+
   if (!username) return null;
 
   const visible = pipelines.filter((p) =>
     p.name.toLowerCase().includes(search.toLowerCase())
   );
 
-  const configured = pipelines.filter((p) => (p.groupCount ?? 0) > 0).length;
-  const running = pipelines.filter((p) => p.isRunning).length;
-  const needsAttention = pipelines.filter((p) => p.needsAttention).length;
+  const activePipelines = pipelines.filter((p) => p.isActive);
+  const configured = activePipelines.filter((p) => (p.groupCount ?? 0) > 0).length;
+  const running = activePipelines.filter((p) => p.isRunning).length;
+  const needsAttention = activePipelines.filter((p) => p.needsAttention).length;
 
   const statCards = [
     { label: "Total pipelines", value: pipelines.length, color: "#4F46E5", bg: "#EEF2FF" },
@@ -217,7 +225,9 @@ export default function PipelineBuilderListPage() {
                 <div
                   key={p.id}
                   onClick={() => router.push(`/pipeline-builder/${p.id}`)}
-                  className="group flex cursor-pointer items-center gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3.5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md"
+                  className={`group flex cursor-pointer items-center gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3.5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md ${
+                    !p.isActive ? "opacity-60" : ""
+                  }`}
                 >
                   {/* Avatar */}
                   <div
@@ -260,15 +270,17 @@ export default function PipelineBuilderListPage() {
                     </span>
                   )}
 
-                  {/* Status badge: Draft until at least one procedure is attached */}
+                  {/* Status badge: Inactive overrides everything, else Draft until a procedure is attached */}
                   <span
                     className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${
-                      (p.procCount ?? 0) > 0
-                        ? "bg-emerald-50 text-emerald-700"
-                        : "bg-indigo-50 text-indigo-600"
+                      !p.isActive
+                        ? "bg-zinc-100 text-zinc-500"
+                        : (p.procCount ?? 0) > 0
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "bg-indigo-50 text-indigo-600"
                     }`}
                   >
-                    {(p.procCount ?? 0) > 0 ? "Active" : "Draft"}
+                    {!p.isActive ? "Inactive" : (p.procCount ?? 0) > 0 ? "Active" : "Draft"}
                   </span>
 
                   {/* Edit icon */}
@@ -287,13 +299,23 @@ export default function PipelineBuilderListPage() {
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} />
                         <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
-                          <button
-                            onClick={() => handleArchive(p)}
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
-                          >
-                            <IconArchive className="h-3.5 w-3.5" />
-                            Mark inactive
-                          </button>
+                          {p.isActive ? (
+                            <button
+                              onClick={() => handleArchive(p)}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+                            >
+                              <IconArchive className="h-3.5 w-3.5" />
+                              Mark inactive
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleReactivate(p)}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-emerald-700 hover:bg-emerald-50"
+                            >
+                              <IconCheck className="h-3.5 w-3.5" />
+                              Reactivate
+                            </button>
+                          )}
                           <button
                             onClick={() => handleDelete(p)}
                             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50"

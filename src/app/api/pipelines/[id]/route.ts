@@ -1,7 +1,32 @@
 import { NextResponse } from "next/server";
 import { getCurrentUsername } from "@/lib/auth";
 import { isAdmin } from "@/lib/roles";
-import { archivePipeline, deletePipelineHard } from "@/lib/pipelines";
+import { archivePipeline, deletePipelineHard, reactivatePipeline } from "@/lib/pipelines";
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const username = await getCurrentUsername();
+  if (!username) return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
+  if (!(await isAdmin(username))) {
+    return NextResponse.json({ error: "Only admins can edit pipelines." }, { status: 403 });
+  }
+
+  const { id } = await params;
+  const pipelineId = Number(id);
+  if (!Number.isFinite(pipelineId)) {
+    return NextResponse.json({ error: "Invalid pipeline id." }, { status: 400 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  if (searchParams.get("mode") !== "reactivate") {
+    return NextResponse.json({ error: "mode must be 'reactivate'." }, { status: 400 });
+  }
+
+  await reactivatePipeline(pipelineId);
+  return NextResponse.json({ ok: true });
+}
 
 export async function DELETE(
   request: Request,

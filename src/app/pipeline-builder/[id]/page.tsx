@@ -23,6 +23,7 @@ import {
   IconChevronDown,
   IconDots,
   IconArchive,
+  IconCheck,
 } from "@/components/icons";
 import type { PipelineStructure, CatalogProcedure, ExecMode } from "@/lib/pipelineBuilder";
 
@@ -237,6 +238,12 @@ export default function PipelineCanvasPage() {
     router.push("/pipeline-builder");
   }
 
+  async function handleReactivatePipeline() {
+    setMenuOpen(false);
+    await fetch(`/api/pipelines/${pipelineId}?mode=reactivate`, { method: "PATCH" });
+    load();
+  }
+
   async function handleDropOnGroup(groupId: number, targetIndex?: number) {
     setDragOverGroup(null);
     const payload = dragPayload.current;
@@ -323,10 +330,14 @@ export default function PipelineCanvasPage() {
               <h1 className="text-xl font-semibold text-zinc-900">{structure.pipelineName}</h1>
               <span
                 className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                  isDraft ? "bg-indigo-50 text-indigo-600" : "bg-emerald-50 text-emerald-700"
+                  !structure.isActive
+                    ? "bg-zinc-100 text-zinc-500"
+                    : isDraft
+                      ? "bg-indigo-50 text-indigo-600"
+                      : "bg-emerald-50 text-emerald-700"
                 }`}
               >
-                {isDraft ? "Draft" : "Active"}
+                {!structure.isActive ? "Inactive" : isDraft ? "Draft" : "Active"}
               </span>
             </div>
             <p className="mt-1.5 text-sm text-zinc-500">Organize procedures into groups and define execution order.</p>
@@ -363,13 +374,23 @@ export default function PipelineCanvasPage() {
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
                     <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
-                      <button
-                        onClick={handleArchivePipeline}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
-                      >
-                        <IconArchive className="h-3.5 w-3.5" />
-                        Mark inactive
-                      </button>
+                      {structure.isActive ? (
+                        <button
+                          onClick={handleArchivePipeline}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+                        >
+                          <IconArchive className="h-3.5 w-3.5" />
+                          Mark inactive
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handleReactivatePipeline}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-emerald-700 hover:bg-emerald-50"
+                        >
+                          <IconCheck className="h-3.5 w-3.5" />
+                          Reactivate
+                        </button>
+                      )}
                       <button
                         onClick={handleDeletePipeline}
                         className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50"

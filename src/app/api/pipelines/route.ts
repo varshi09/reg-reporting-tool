@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUsername } from "@/lib/auth";
 import { isAdmin } from "@/lib/roles";
-import { getActivePipelines, createPipeline, withCurrentRunFlags } from "@/lib/pipelines";
+import { getAllPipelines, createPipeline, withCurrentRunFlags } from "@/lib/pipelines";
 
 export async function GET(request: Request) {
   const username = await getCurrentUsername();
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const timeKey = searchParams.get("timeKey");
 
-  let pipelines = await getActivePipelines();
+  let pipelines = await getAllPipelines();
   if (timeKey) {
     pipelines = await withCurrentRunFlags(pipelines, timeKey);
   }

@@ -23,7 +23,8 @@ type PipelineRow = {
   PROC_COUNT: number;
 };
 
-export async function getActivePipelines(): Promise<Pipeline[]> {
+/** Returns every pipeline, active or inactive - the builder list shows both, badging inactive ones distinctly rather than hiding them. */
+export async function getAllPipelines(): Promise<Pipeline[]> {
   const rows: PipelineRow[] = await withConnection(async (connection) => {
     const result = await connection.execute<PipelineRow>(
       `SELECT p.id, p.name, p.is_active, p.created_by, p.created_at,
@@ -32,9 +33,8 @@ export async function getActivePipelines(): Promise<Pipeline[]> {
        FROM PIPELINES p
        LEFT JOIN PIPELINE_GROUPS pg ON pg.pipeline_id = p.id
        LEFT JOIN PIPELINE_PROCEDURES pp ON pp.pipeline_id = p.id AND pp.group_id IS NOT NULL
-       WHERE p.is_active = 1
        GROUP BY p.id, p.name, p.is_active, p.created_by, p.created_at
-       ORDER BY p.id`
+       ORDER BY p.is_active DESC, p.id`
     );
     return result.rows ?? [];
   });
@@ -102,6 +102,16 @@ export async function archivePipeline(pipelineId: number): Promise<void> {
   await withConnection((connection) =>
     connection.execute(
       `UPDATE PIPELINES SET is_active = 0 WHERE id = :id`,
+      { id: pipelineId },
+      { autoCommit: true }
+    )
+  );
+}
+
+export async function reactivatePipeline(pipelineId: number): Promise<void> {
+  await withConnection((connection) =>
+    connection.execute(
+      `UPDATE PIPELINES SET is_active = 1 WHERE id = :id`,
       { id: pipelineId },
       { autoCommit: true }
     )
