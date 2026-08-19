@@ -302,6 +302,9 @@ export default function PipelineDetailPage() {
   const [running, setRunning] = useState<"next" | "all" | null>(null);
   const [runMsg, setRunMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [overridingProcId, setOverridingProcId] = useState<number | null>(null);
+  const [overrideNote, setOverrideNote] = useState("");
+  const [overrideSubmitting, setOverrideSubmitting] = useState(false);
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const defaultTimeKey = getReportingPeriod().timeKey;
@@ -383,6 +386,31 @@ export default function PipelineDetailPage() {
       }
     } finally {
       setRunning(null);
+      if (msgTimer.current) clearTimeout(msgTimer.current);
+      msgTimer.current = setTimeout(() => setRunMsg(null), 5000);
+    }
+  }
+
+  async function handleOverride(procedureId: number) {
+    if (!overrideNote.trim() || overrideSubmitting) return;
+    setOverrideSubmitting(true);
+    try {
+      const res = await fetch(`/api/pipeline-status/${pipelineId}/override`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ procedureId, timeKey, note: overrideNote.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setRunMsg({ type: "err", text: data.error ?? "Could not proceed without upload." });
+      } else {
+        setRunMsg({ type: "ok", text: "Marked as proceeded without upload." });
+        setOverridingProcId(null);
+        setOverrideNote("");
+        load();
+      }
+    } finally {
+      setOverrideSubmitting(false);
       if (msgTimer.current) clearTimeout(msgTimer.current);
       msgTimer.current = setTimeout(() => setRunMsg(null), 5000);
     }
@@ -719,8 +747,49 @@ export default function PipelineDetailPage() {
                         {p.proc.dependsOnDataset && (
                           <p className="ml-6 mt-1 text-[10px] text-zinc-500">depends on {p.proc.dependsOnDataset}</p>
                         )}
+                        {p.overrideType && (
+                          <p className="ml-6 mt-1 text-[10px] font-medium text-amber-700">
+                            Proceeded without upload{p.updatedBy ? ` · by ${p.updatedBy}` : ""}
+                            {p.note ? ` — ${p.note}` : ""}
+                          </p>
+                        )}
                         {p.isBlocked && p.blockedReason && (
-                          <p className="ml-6 mt-1 text-[10px] text-amber-700">{p.blockedReason}</p>
+                          <div className="ml-6 mt-1">
+                            <p className="text-[10px] text-amber-700">{p.blockedReason}</p>
+                            {overridingProcId === p.proc.procedureId ? (
+                              <div className="mt-1.5 flex flex-col gap-1.5">
+                                <textarea
+                                  value={overrideNote}
+                                  onChange={(e) => setOverrideNote(e.target.value)}
+                                  placeholder="Reason for proceeding without the upload…"
+                                  rows={2}
+                                  className="w-full rounded border border-amber-300 bg-white px-2 py-1 text-[10px] text-zinc-700 outline-none"
+                                />
+                                <div className="flex gap-1.5">
+                                  <button
+                                    onClick={() => handleOverride(p.proc.procedureId)}
+                                    disabled={!overrideNote.trim() || overrideSubmitting}
+                                    className="rounded bg-amber-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {overrideSubmitting ? "Submitting…" : "Confirm & proceed"}
+                                  </button>
+                                  <button
+                                    onClick={() => { setOverridingProcId(null); setOverrideNote(""); }}
+                                    className="rounded border border-zinc-200 px-2 py-1 text-[10px] font-medium text-zinc-600 hover:bg-zinc-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => { setOverridingProcId(p.proc.procedureId); setOverrideNote(""); }}
+                                className="mt-1 rounded border border-amber-300 px-2 py-0.5 text-[10px] font-medium text-amber-700 hover:bg-amber-100"
+                              >
+                                Proceed without upload
+                              </button>
+                            )}
+                          </div>
                         )}
                         {(p.startTime || p.endTime) && (
                           <p className="ml-6 mt-1 text-[10px] text-zinc-400">

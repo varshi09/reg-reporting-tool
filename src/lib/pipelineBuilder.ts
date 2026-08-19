@@ -621,6 +621,38 @@ async function runGroupProcedure(
 }
 
 /**
+ * Lets a user manually clear a blocked procedure's dependency check and mark
+ * it done, for cases where the upstream data genuinely isn't coming through
+ * UPLOAD_LOG (e.g. a manual/offline source) but the pipeline still needs to
+ * proceed. Refuses anything that isn't actually blocked right now, so this
+ * can't be used as a generic "mark complete" backdoor.
+ */
+export async function overrideBlockedProcedure(
+  pipelineId: number,
+  procedureId: number,
+  timeKey: string,
+  note: string,
+  triggeredBy: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const state = await getPipelineRunState(pipelineId, timeKey);
+  if (!state) return { ok: false, error: "Pipeline not found." };
+
+  const procState = state.groups.flatMap((g) => g.procedures).find((p) => p.proc.procedureId === procedureId);
+  if (!procState) return { ok: false, error: "Procedure not found in this pipeline." };
+  if (!procState.isBlocked) return { ok: false, error: "This procedure is not currently blocked." };
+
+  await withConnection((conn) =>
+    conn.execute(
+      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, start_time, end_time, note, updated_by)
+       VALUES (:pipelineId, :procedureId, :timeKey, 'COMPLETED', 'PROCEED_WITHOUT_UPLOAD', LOCALTIMESTAMP, LOCALTIMESTAMP, :note, :updatedBy)`,
+      { pipelineId, procedureId, timeKey, note, updatedBy: triggeredBy },
+      { autoCommit: true }
+    )
+  );
+  return { ok: true };
+}
+
+/**
  * A SEQUENTIAL group must honor sort order strictly: the next procedure to
  * run is the first one (in order) that isn't already COMPLETED. If *that*
  * one is blocked or still IN_PROGRESS, the group cannot advance - it is
