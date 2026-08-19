@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUsername } from "@/lib/auth";
 import { isAdmin } from "@/lib/roles";
-import { archivePipeline, deletePipelineHard, reactivatePipeline } from "@/lib/pipelines";
+import { archivePipeline, deletePipelineHard, reactivatePipeline, renamePipeline } from "@/lib/pipelines";
 
 export async function PATCH(
   request: Request,
@@ -20,12 +20,29 @@ export async function PATCH(
   }
 
   const { searchParams } = new URL(request.url);
-  if (searchParams.get("mode") !== "reactivate") {
-    return NextResponse.json({ error: "mode must be 'reactivate'." }, { status: 400 });
+  const mode = searchParams.get("mode");
+
+  if (mode === "reactivate") {
+    await reactivatePipeline(pipelineId);
+    return NextResponse.json({ ok: true });
   }
 
-  await reactivatePipeline(pipelineId);
-  return NextResponse.json({ ok: true });
+  if (mode === "rename") {
+    const body = await request.json();
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) return NextResponse.json({ error: "Enter a pipeline name." }, { status: 400 });
+    try {
+      await renamePipeline(pipelineId, name);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("ORA-00001")) {
+        return NextResponse.json({ error: "A pipeline with that name already exists." }, { status: 400 });
+      }
+      throw err;
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  return NextResponse.json({ error: "mode must be 'reactivate' or 'rename'." }, { status: 400 });
 }
 
 export async function DELETE(

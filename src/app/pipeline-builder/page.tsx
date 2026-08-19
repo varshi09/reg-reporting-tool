@@ -16,6 +16,7 @@ import {
   IconArchive,
   IconTrash,
   IconCheck,
+  IconX,
 } from "@/components/icons";
 import type { Pipeline } from "@/lib/pipelines";
 
@@ -43,6 +44,10 @@ export default function PipelineBuilderListPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
 
   const period = getReportingPeriod();
 
@@ -98,6 +103,36 @@ export default function PipelineBuilderListPage() {
   async function handleReactivate(p: Pipeline) {
     setMenuOpenId(null);
     await fetch(`/api/pipelines/${p.id}?mode=reactivate`, { method: "PATCH" });
+    load();
+  }
+
+  function openRename(p: Pipeline) {
+    setMenuOpenId(null);
+    setRenamingId(p.id);
+    setRenameValue(p.name);
+    setRenameError(null);
+  }
+
+  async function handleRenameSave(p: Pipeline) {
+    const name = renameValue.trim();
+    if (!name || name === p.name) {
+      setRenamingId(null);
+      return;
+    }
+    setRenaming(true);
+    setRenameError(null);
+    const res = await fetch(`/api/pipelines/${p.id}?mode=rename`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    setRenaming(false);
+    if (!res.ok) {
+      setRenameError(data.error ?? "Couldn't rename pipeline.");
+      return;
+    }
+    setRenamingId(null);
     load();
   }
 
@@ -240,7 +275,33 @@ export default function PipelineBuilderListPage() {
                   {/* Name + meta */}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold text-zinc-900">{p.name}</p>
+                      {renamingId === p.id ? (
+                        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && handleRenameSave(p)}
+                            autoFocus
+                            className="rounded-md border border-indigo-300 px-2 py-0.5 text-sm font-semibold text-zinc-900 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+                          />
+                          <button
+                            onClick={() => handleRenameSave(p)}
+                            disabled={renaming}
+                            className="rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => { setRenamingId(null); setRenameError(null); }}
+                            className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100"
+                          >
+                            <IconX className="h-3.5 w-3.5" />
+                          </button>
+                          {renameError && <p className="text-xs text-red-600">{renameError}</p>}
+                        </div>
+                      ) : (
+                        <p className="text-sm font-semibold text-zinc-900">{p.name}</p>
+                      )}
                       {p.needsAttention && (
                         <IconAlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                       )}
@@ -299,6 +360,13 @@ export default function PipelineBuilderListPage() {
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} />
                         <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
+                          <button
+                            onClick={() => openRename(p)}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+                          >
+                            <IconPencil className="h-3.5 w-3.5" />
+                            Rename pipeline
+                          </button>
                           {p.isActive ? (
                             <button
                               onClick={() => handleArchive(p)}

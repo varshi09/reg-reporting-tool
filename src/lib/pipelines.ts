@@ -108,6 +108,16 @@ export async function archivePipeline(pipelineId: number): Promise<void> {
   );
 }
 
+export async function renamePipeline(pipelineId: number, name: string): Promise<void> {
+  await withConnection((connection) =>
+    connection.execute(
+      `UPDATE PIPELINES SET name = :name WHERE id = :id`,
+      { name, id: pipelineId },
+      { autoCommit: true }
+    )
+  );
+}
+
 export async function reactivatePipeline(pipelineId: number): Promise<void> {
   await withConnection((connection) =>
     connection.execute(

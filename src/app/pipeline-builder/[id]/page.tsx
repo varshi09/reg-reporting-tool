@@ -129,6 +129,9 @@ export default function PipelineCanvasPage() {
   const [dragOverGroup, setDragOverGroup] = useState<number | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [renamingPipeline, setRenamingPipeline] = useState(false);
+  const [pipelineNameValue, setPipelineNameValue] = useState("");
+  const [pipelineRenameError, setPipelineRenameError] = useState<string | null>(null);
   const dragPayload = useRef<DragPayload | null>(null);
 
   const load = useCallback(async () => {
@@ -219,6 +222,36 @@ export default function PipelineCanvasPage() {
       body: JSON.stringify({ dependsOnDataset: value }),
     });
     setDepModalPp(null);
+    load();
+  }
+
+  function openRenamePipeline() {
+    setMenuOpen(false);
+    if (!structure) return;
+    setPipelineNameValue(structure.pipelineName);
+    setPipelineRenameError(null);
+    setRenamingPipeline(true);
+  }
+
+  async function handleRenamePipelineSave() {
+    if (!structure) return;
+    const name = pipelineNameValue.trim();
+    if (!name || name === structure.pipelineName) {
+      setRenamingPipeline(false);
+      return;
+    }
+    setPipelineRenameError(null);
+    const res = await fetch(`/api/pipelines/${pipelineId}?mode=rename`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setPipelineRenameError(data.error ?? "Couldn't rename pipeline.");
+      return;
+    }
+    setRenamingPipeline(false);
     load();
   }
 
@@ -327,7 +360,32 @@ export default function PipelineCanvasPage() {
           <div>
             <div className="flex items-center gap-2.5">
               <span className="h-2.5 w-2.5 rounded-full bg-indigo-500" />
-              <h1 className="text-xl font-semibold text-zinc-900">{structure.pipelineName}</h1>
+              {renamingPipeline ? (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={pipelineNameValue}
+                    onChange={(e) => setPipelineNameValue(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleRenamePipelineSave()}
+                    autoFocus
+                    className="rounded-md border border-indigo-300 px-2 py-0.5 text-xl font-semibold text-zinc-900 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+                  />
+                  <button
+                    onClick={handleRenamePipelineSave}
+                    className="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => { setRenamingPipeline(false); setPipelineRenameError(null); }}
+                    className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100"
+                  >
+                    <IconX className="h-4 w-4" />
+                  </button>
+                  {pipelineRenameError && <p className="text-xs text-red-600">{pipelineRenameError}</p>}
+                </div>
+              ) : (
+                <h1 className="text-xl font-semibold text-zinc-900">{structure.pipelineName}</h1>
+              )}
               <span
                 className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                   !structure.isActive
@@ -374,6 +432,13 @@ export default function PipelineCanvasPage() {
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
                     <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
+                      <button
+                        onClick={openRenamePipeline}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+                      >
+                        <IconPencil className="h-3.5 w-3.5" />
+                        Rename pipeline
+                      </button>
                       {structure.isActive ? (
                         <button
                           onClick={handleArchivePipeline}
