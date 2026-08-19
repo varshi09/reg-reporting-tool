@@ -6,7 +6,6 @@ import MultiSelectDropdown from "@/components/MultiSelectDropdown";
 import type { Brf01Metrics } from "@/lib/brf01Template";
 import { BRF01_ENTITY_GROUPS, BRF01_DATA_SOURCES } from "@/lib/brf01Template";
 import { getReportingPeriod } from "@/lib/reportingPeriod";
-import type { Brf01DetailRow } from "@/lib/brf01Detail";
 
 type Brf01Entry = {
   code: string;
@@ -15,29 +14,38 @@ type Brf01Entry = {
   metrics: Brf01Metrics;
 };
 
-type DrillTarget = {
-  lineNo: string;
-  description: string;
-  resident: "RES" | "NONRES";
-  currency: "AED" | "FCY";
-  accounts: number | null;
-  amount: number | null;
-};
+type AppliedFilters = { timeKey: string; entityGroups: string[]; dataSources: string[] };
 
 function fmt(value: number | null) {
   if (value === null || value === undefined) return "";
   return value.toLocaleString(undefined, { minimumFractionDigits: 2 });
 }
 
-/** A bucket cell (accounts or amount) that opens the drill-down when it has a real value. */
+function buildDrillUrl(
+  filters: AppliedFilters,
+  lineNo: string,
+  resident: "RES" | "NONRES",
+  currency: "AED" | "FCY"
+): string {
+  const params = new URLSearchParams();
+  filters.entityGroups.forEach((eg) => params.append("entityGroup", eg));
+  filters.dataSources.forEach((ds) => params.append("dataSource", ds));
+  if (filters.timeKey) params.set("timeKey", filters.timeKey.replace(/-/g, ""));
+  params.set("lineNo", lineNo);
+  params.set("resident", resident);
+  params.set("currency", currency);
+  return `/reports/brf01/detail?${params.toString()}`;
+}
+
+/** A bucket cell (accounts or amount) that opens the drill-down page in a new tab when it has a real value. */
 function DrillCell({
   value,
   isAmount,
-  onClick,
+  href,
 }: {
   value: number | null;
   isAmount: boolean;
-  onClick: () => void;
+  href: string;
 }) {
   const display = isAmount ? fmt(value) : (value ?? "");
   if (!value) {
@@ -45,107 +53,15 @@ function DrillCell({
   }
   return (
     <td className="border border-zinc-200 px-2 py-1">
-      <button
-        onClick={onClick}
-        className="w-full text-left text-indigo-700 underline decoration-dotted underline-offset-2 hover:text-indigo-900"
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block text-indigo-700 underline decoration-dotted underline-offset-2 hover:text-indigo-900"
       >
         {display}
-      </button>
+      </a>
     </td>
-  );
-}
-
-function DrillDownModal({
-  target,
-  filters,
-  onClose,
-}: {
-  target: DrillTarget;
-  filters: { timeKey: string; entityGroups: string[]; dataSources: string[] };
-  onClose: () => void;
-}) {
-  const [rows, setRows] = useState<Brf01DetailRow[] | null>(null);
-
-  useEffect(() => {
-    const params = new URLSearchParams();
-    filters.entityGroups.forEach((eg) => params.append("entityGroup", eg));
-    filters.dataSources.forEach((ds) => params.append("dataSource", ds));
-    if (filters.timeKey) params.set("timeKey", filters.timeKey.replace(/-/g, ""));
-    params.set("lineNo", target.lineNo);
-    params.set("resident", target.resident);
-    params.set("currency", target.currency);
-
-    fetch(`/api/brf01/detail?${params.toString()}`)
-      .then((r) => r.json())
-      .then((data) => setRows(data.rows ?? []));
-  }, [target, filters]);
-
-  const residentLabel = target.resident === "RES" ? "Resident" : "Non-Resident";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="flex max-h-[85vh] w-full max-w-6xl flex-col rounded-xl bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold text-zinc-900">
-              {target.lineNo} — {target.description}
-            </p>
-            <p className="text-xs text-zinc-500">
-              {residentLabel} · {target.currency} · {target.accounts ?? 0} a/cs · {fmt(target.amount)} AED
-            </p>
-          </div>
-          <button onClick={onClose} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50">
-            Close
-          </button>
-        </div>
-        <div className="flex-1 overflow-auto p-5">
-          {rows === null ? (
-            <p className="text-sm text-zinc-500">Loading…</p>
-          ) : rows.length === 0 ? (
-            <p className="text-sm text-zinc-500">No detail rows for this cell.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1100px] border-collapse text-left text-xs">
-                <thead>
-                  <tr className="border-b border-zinc-200 text-zinc-500">
-                    <th className="py-2 pr-3 font-medium">Customer</th>
-                    <th className="py-2 pr-3 font-medium">Customer No.</th>
-                    <th className="py-2 pr-3 font-medium">Contract No.</th>
-                    <th className="py-2 pr-3 font-medium">Currency</th>
-                    <th className="py-2 pr-3 text-right font-medium">A/cs</th>
-                    <th className="py-2 pr-3 text-right font-medium">Balance (AED)</th>
-                    <th className="py-2 pr-3 font-medium">Sector</th>
-                    <th className="py-2 pr-3 font-medium">Nationality</th>
-                    <th className="py-2 pr-3 font-medium">Emirate</th>
-                    <th className="py-2 pr-3 font-medium">Country</th>
-                    <th className="py-2 pr-3 font-medium">GL Account</th>
-                    <th className="py-2 font-medium">Source</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.customerNumber + r.contractNumber} className="border-b border-zinc-50 text-zinc-700">
-                      <td className="py-2 pr-3 font-medium text-zinc-900">{r.customerName}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{r.customerNumber}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{r.contractNumber}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{r.currencyCode}</td>
-                      <td className="py-2 pr-3 text-right text-zinc-500">{r.noOfAccounts}</td>
-                      <td className="py-2 pr-3 text-right text-zinc-900">{fmt(r.closingBalanceAed)}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{r.sector ?? "—"}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{r.nationalityDesc ?? "—"}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{r.emirates ?? "—"}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{r.countryName ?? "—"}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{r.glAccountId ?? "—"}</td>
-                      <td className="py-2 text-zinc-500">{r.target ?? "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -159,15 +75,10 @@ export default function Brf01ReportPage() {
   const [draftEntityGroups, setDraftEntityGroups] = useState<string[]>([BRF01_ENTITY_GROUPS[0]]);
   const [draftDataSources, setDraftDataSources] = useState<string[]>([BRF01_DATA_SOURCES[0]]);
 
-  const [appliedFilters, setAppliedFilters] = useState<{
-    timeKey: string;
-    entityGroups: string[];
-    dataSources: string[];
-  } | null>(null);
+  const [appliedFilters, setAppliedFilters] = useState<AppliedFilters | null>(null);
 
   const [entries, setEntries] = useState<Brf01Entry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [drillTarget, setDrillTarget] = useState<DrillTarget | null>(null);
 
   useEffect(() => {
     const defaultTimeKey = toDateInputValue(getReportingPeriod().timeKey);
@@ -287,6 +198,9 @@ export default function Brf01ReportPage() {
               Select at least one entity group and one data source.
             </p>
           )}
+          <p className="mt-3 text-xs text-zinc-400">
+            Click any A/cs or Amount cell to drill down into the underlying records (opens in a new tab).
+          </p>
         </div>
 
         <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
@@ -325,20 +239,8 @@ export default function Brf01ReportPage() {
                 <tbody>
                   {entries.map((entry) => {
                     const m = entry.metrics;
-                    const drill = (
-                      resident: "RES" | "NONRES",
-                      currency: "AED" | "FCY",
-                      accounts: number | null,
-                      amount: number | null
-                    ) => () =>
-                      setDrillTarget({
-                        lineNo: entry.code,
-                        description: entry.description,
-                        resident,
-                        currency,
-                        accounts,
-                        amount,
-                      });
+                    const url = (resident: "RES" | "NONRES", currency: "AED" | "FCY") =>
+                      appliedFilters ? buildDrillUrl(appliedFilters, entry.code, resident, currency) : "#";
                     return (
                       <tr
                         key={entry.code}
@@ -346,14 +248,14 @@ export default function Brf01ReportPage() {
                       >
                         <td className="border border-zinc-200 px-2 py-1">{entry.code}</td>
                         <td className="border border-zinc-200 px-2 py-1">{entry.description}</td>
-                        <DrillCell value={m.resAedAccounts} isAmount={false} onClick={drill("RES", "AED", m.resAedAccounts, m.resAedAmount)} />
-                        <DrillCell value={m.resAedAmount} isAmount={true} onClick={drill("RES", "AED", m.resAedAccounts, m.resAedAmount)} />
-                        <DrillCell value={m.resFcyAccounts} isAmount={false} onClick={drill("RES", "FCY", m.resFcyAccounts, m.resFcyAmount)} />
-                        <DrillCell value={m.resFcyAmount} isAmount={true} onClick={drill("RES", "FCY", m.resFcyAccounts, m.resFcyAmount)} />
-                        <DrillCell value={m.nonresAedAccounts} isAmount={false} onClick={drill("NONRES", "AED", m.nonresAedAccounts, m.nonresAedAmount)} />
-                        <DrillCell value={m.nonresAedAmount} isAmount={true} onClick={drill("NONRES", "AED", m.nonresAedAccounts, m.nonresAedAmount)} />
-                        <DrillCell value={m.nonresFcyAccounts} isAmount={false} onClick={drill("NONRES", "FCY", m.nonresFcyAccounts, m.nonresFcyAmount)} />
-                        <DrillCell value={m.nonresFcyAmount} isAmount={true} onClick={drill("NONRES", "FCY", m.nonresFcyAccounts, m.nonresFcyAmount)} />
+                        <DrillCell value={m.resAedAccounts} isAmount={false} href={url("RES", "AED")} />
+                        <DrillCell value={m.resAedAmount} isAmount={true} href={url("RES", "AED")} />
+                        <DrillCell value={m.resFcyAccounts} isAmount={false} href={url("RES", "FCY")} />
+                        <DrillCell value={m.resFcyAmount} isAmount={true} href={url("RES", "FCY")} />
+                        <DrillCell value={m.nonresAedAccounts} isAmount={false} href={url("NONRES", "AED")} />
+                        <DrillCell value={m.nonresAedAmount} isAmount={true} href={url("NONRES", "AED")} />
+                        <DrillCell value={m.nonresFcyAccounts} isAmount={false} href={url("NONRES", "FCY")} />
+                        <DrillCell value={m.nonresFcyAmount} isAmount={true} href={url("NONRES", "FCY")} />
                         <td className="border border-zinc-200 px-2 py-1">{m.totalAccounts ?? ""}</td>
                         <td className="border border-zinc-200 px-2 py-1">{fmt(m.totalAmount)}</td>
                       </tr>
@@ -365,14 +267,6 @@ export default function Brf01ReportPage() {
           )}
         </div>
       </div>
-
-      {drillTarget && appliedFilters && (
-        <DrillDownModal
-          target={drillTarget}
-          filters={appliedFilters}
-          onClose={() => setDrillTarget(null)}
-        />
-      )}
     </AppShell>
   );
 }

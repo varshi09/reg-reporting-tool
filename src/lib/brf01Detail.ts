@@ -1,12 +1,18 @@
 import { withConnection } from "@/lib/db";
 
 export type Brf01DetailRow = {
+  timeKey: string;
+  entityGroup: string;
+  dataSource: string;
+  lineNo: string;
+  lineDesc: string | null;
+  residentFlag: string;
+  currencyCode: string;
   customerNumber: string;
   contractNumber: string;
   customerName: string;
   noOfAccounts: number;
   closingBalanceAed: number;
-  currencyCode: string;
   nationality: string | null;
   nationalityDesc: string | null;
   emirates: string | null;
@@ -18,12 +24,18 @@ export type Brf01DetailRow = {
 };
 
 type Row = {
+  TIME_KEY: string;
+  ENTITY_GROUP: string;
+  DATA_SOURCE: string;
+  LINE_NO: string;
+  LINE_DESC: string | null;
+  RESIDENT_FLAG: string;
+  CURRENCY_CODE: string;
   CUSTOMER_NUMBER: string;
   CONTRACT_NUMBER: string;
   CUSTOMER_NAME: string;
   NO_OF_ACCOUNTS: number;
   CLOSING_BALANCE_AED: number;
-  CURRENCY_CODE: string;
   NATIONALITY: string | null;
   NATIONALITY_DESC: string | null;
   EMIRATES: string | null;
@@ -49,21 +61,16 @@ function buildInClause(
   return `${column} IN (${names.join(", ")})`;
 }
 
-/**
- * Detail rows behind one summary cell: same slicing keys as BRF01_SUMMARY
- * (time key, entity groups, data sources, line) plus the specific
- * resident/currency bucket the clicked cell represents. "FCY" matches any
- * non-AED currency, mirroring how the summary collapses all foreign
- * currencies into a single AED-equivalent column.
- */
-export async function getBrf01Detail(params: {
+export type Brf01DetailParams = {
   timeKey: string;
   entityGroups: string[];
   dataSources: string[];
   lineNo: string;
   resident: "RES" | "NONRES";
   currency: "AED" | "FCY";
-}): Promise<Brf01DetailRow[]> {
+};
+
+function buildDetailQuery(params: Brf01DetailParams): { sql: string; binds: Record<string, string> } {
   const conditions: string[] = ["line_no = :lineNo", "resident_flag = :resident"];
   const binds: Record<string, string> = { lineNo: params.lineNo, resident: params.resident };
 
@@ -79,26 +86,30 @@ export async function getBrf01Detail(params: {
 
   conditions.push(params.currency === "AED" ? "currency_code = 'AED'" : "currency_code != 'AED'");
 
-  const rows: Row[] = await withConnection(async (connection) => {
-    const result = await connection.execute<Row>(
-      `SELECT customer_number, contract_number, customer_name, no_of_accounts, closing_balance_aed,
-              currency_code, nationality, nationality_desc, emirates, country_code, country_name,
-              gl_account_id, target, sector
-       FROM BRF01_DETAIL
-       WHERE ${conditions.join(" AND ")}
-       ORDER BY closing_balance_aed DESC`,
-      binds
-    );
-    return result.rows ?? [];
-  });
+  const sql = `SELECT time_key, entity_group, data_source, line_no, line_desc, resident_flag, currency_code,
+                      customer_number, contract_number, customer_name, no_of_accounts, closing_balance_aed,
+                      nationality, nationality_desc, emirates, country_code, country_name,
+                      gl_account_id, target, sector
+               FROM BRF01_DETAIL
+               WHERE ${conditions.join(" AND ")}
+               ORDER BY closing_balance_aed DESC`;
+  return { sql, binds };
+}
 
-  return rows.map((r) => ({
+function mapRow(r: Row): Brf01DetailRow {
+  return {
+    timeKey: r.TIME_KEY,
+    entityGroup: r.ENTITY_GROUP,
+    dataSource: r.DATA_SOURCE,
+    lineNo: r.LINE_NO,
+    lineDesc: r.LINE_DESC,
+    residentFlag: r.RESIDENT_FLAG,
+    currencyCode: r.CURRENCY_CODE,
     customerNumber: r.CUSTOMER_NUMBER,
     contractNumber: r.CONTRACT_NUMBER,
     customerName: r.CUSTOMER_NAME,
     noOfAccounts: r.NO_OF_ACCOUNTS,
     closingBalanceAed: r.CLOSING_BALANCE_AED,
-    currencyCode: r.CURRENCY_CODE,
     nationality: r.NATIONALITY,
     nationalityDesc: r.NATIONALITY_DESC,
     emirates: r.EMIRATES,
@@ -107,5 +118,21 @@ export async function getBrf01Detail(params: {
     glAccountId: r.GL_ACCOUNT_ID,
     target: r.TARGET,
     sector: r.SECTOR,
-  }));
+  };
+}
+
+/**
+ * Detail rows behind one summary cell: same slicing keys as BRF01_SUMMARY
+ * (time key, entity groups, data sources, line) plus the specific
+ * resident/currency bucket the clicked cell represents. "FCY" matches any
+ * non-AED currency, mirroring how the summary collapses all foreign
+ * currencies into a single AED-equivalent column.
+ */
+export async function getBrf01Detail(params: Brf01DetailParams): Promise<Brf01DetailRow[]> {
+  const { sql, binds } = buildDetailQuery(params);
+  const rows: Row[] = await withConnection(async (connection) => {
+    const result = await connection.execute<Row>(sql, binds);
+    return result.rows ?? [];
+  });
+  return rows.map(mapRow);
 }
