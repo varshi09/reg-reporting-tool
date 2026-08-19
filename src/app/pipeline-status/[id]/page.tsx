@@ -69,7 +69,7 @@ function relativeMinutes(iso: string | null): string | null {
 
 // ─── Group stepper (enhanced with per-node timing + action-required detail) ─
 
-function GroupStepper({ groups }: { groups: GroupRunState[] }) {
+function GroupStepper({ groups, onExpand }: { groups: GroupRunState[]; onExpand: (groupId: number) => void }) {
   if (groups.length === 0) {
     return (
       <div className="flex items-center gap-2 text-xs text-zinc-400">
@@ -103,11 +103,15 @@ function GroupStepper({ groups }: { groups: GroupRunState[] }) {
 
         return (
           <div key={gs.group.id} className="flex items-start">
-            <div className="flex flex-col items-center" style={{ minWidth: 96 }}>
+            <div
+              className="flex cursor-pointer flex-col items-center rounded-md py-1 transition-colors hover:bg-zinc-50"
+              style={{ minWidth: 96 }}
+              onDoubleClick={() => onExpand(gs.group.id)}
+              title="Double-click to view procedures"
+            >
               <div
                 className="flex h-9 w-9 items-center justify-center rounded-full border-2"
                 style={{ background: col.bg, borderColor: gs.groupStatus === "PENDING" ? "#D4D4D8" : col.border }}
-                title={`${gs.group.name}: ${m.label}`}
               >
                 <Icon
                   className={`h-4 w-4 ${gs.groupStatus === "IN_PROGRESS" ? "animate-spin" : ""}`}
@@ -271,6 +275,7 @@ export default function PipelineDetailPage() {
   const [loading, setLoading] = useState(true);
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [expandedGroupId, setExpandedGroupId] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [running, setRunning] = useState<"next" | "all" | null>(null);
   const [runMsg, setRunMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -467,7 +472,7 @@ export default function PipelineDetailPage() {
 
         {/* Group stepper */}
         <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <GroupStepper groups={state.groups} />
+          <GroupStepper groups={state.groups} onExpand={setExpandedGroupId} />
         </div>
 
         {/* Attention banner */}
@@ -600,6 +605,86 @@ export default function PipelineDetailPage() {
           onClose={() => setShowLog(false)}
         />
       )}
+
+      {expandedGroupId !== null && (() => {
+        const gIdx = state.groups.findIndex((g) => g.group.id === expandedGroupId);
+        const gs = state.groups[gIdx];
+        if (!gs) return null;
+        const col = GROUP_COLORS[gIdx % GROUP_COLORS.length];
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900">{gs.group.name}</p>
+                  <p className="text-xs text-zinc-500">
+                    {gs.procedures.length} procedure{gs.procedures.length !== 1 ? "s" : ""} · {gs.group.execMode === "PARALLEL" ? "Parallel" : "Sequential"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setExpandedGroupId(null)}
+                  className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-4 flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
+                {gs.procedures.length === 0 ? (
+                  <p className="text-xs text-zinc-500">This group has no procedures yet.</p>
+                ) : (
+                  gs.procedures.map((p, pi) => {
+                    const m = STATUS_META[p.status];
+                    const Icon = m.Icon;
+                    return (
+                      <div
+                        key={p.proc.pipelineProcedureId}
+                        className="rounded-lg border px-3 py-2.5"
+                        style={{ borderColor: p.isBlocked ? "#FCD34D" : "#E4E4E7", background: p.isBlocked ? "#FFFBEB" : "#fff" }}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="w-4 shrink-0 text-center text-[10px] text-zinc-400">{pi + 1}</span>
+                            <span className="truncate text-xs font-medium text-zinc-900">{p.proc.procedureName}</span>
+                          </span>
+                          <span
+                            className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                            style={{ background: m.bg, color: m.text }}
+                          >
+                            <Icon className={`h-3 w-3 ${p.status === "IN_PROGRESS" ? "animate-spin" : ""}`} />
+                            {m.label}
+                          </span>
+                        </div>
+                        {p.proc.packageName && (
+                          <p className="ml-6 mt-0.5 text-[10px] text-zinc-400">{p.proc.packageName}</p>
+                        )}
+                        {p.proc.dependsOnDataset && (
+                          <p className="ml-6 mt-1 text-[10px] text-zinc-500">depends on {p.proc.dependsOnDataset}</p>
+                        )}
+                        {p.isBlocked && p.blockedReason && (
+                          <p className="ml-6 mt-1 text-[10px] text-amber-700">{p.blockedReason}</p>
+                        )}
+                        {(p.startTime || p.endTime) && (
+                          <p className="ml-6 mt-1 text-[10px] text-zinc-400">
+                            {p.startTime && `Started ${fmtDT(p.startTime)}`}
+                            {p.startTime && p.endTime && " · "}
+                            {p.endTime && `Ended ${fmtDT(p.endTime)}`}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="mt-3 flex items-center gap-1.5 text-[10px] text-zinc-400">
+                <span className="h-2 w-2 rounded-full" style={{ background: col.dot }} />
+                Matches the {gs.group.name} node's color in the stepper above
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </AppShell>
   );
 }
