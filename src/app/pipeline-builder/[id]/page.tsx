@@ -26,6 +26,7 @@ import {
   IconCheck,
 } from "@/components/icons";
 import type { PipelineStructure, CatalogProcedure, ExecMode } from "@/lib/pipelineBuilder";
+import { UPLOAD_TABLES } from "@/lib/uploadTables";
 
 // ─── Palette ─────────────────────────────────────────────────────────────────
 
@@ -71,6 +72,11 @@ function DependencyModal({
   onClose: () => void;
 }) {
   const [value, setValue] = useState(initialValue ?? "");
+  // A previously-set value that no longer matches any known upload table
+  // (e.g. legacy/free-typed data) still needs to show up as an option, so
+  // it isn't silently discarded the moment this modal opens.
+  const isStaleValue = initialValue !== null && !UPLOAD_TABLES.some((t) => t.key === initialValue);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
@@ -78,13 +84,22 @@ function DependencyModal({
         <p className="mt-1 text-xs text-zinc-500">
           This procedure won&rsquo;t run until an approved upload exists for this dataset (or it&rsquo;s overridden).
         </p>
-        <input
+        <select
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="e.g. BRF_INPUT_FILE"
           autoFocus
-          className="mt-3 w-full rounded-lg border border-zinc-200 px-3 py-1.5 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
-        />
+          className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+        >
+          <option value="">No dependency</option>
+          {isStaleValue && (
+            <option value={initialValue!}>{initialValue} (no longer a known dataset)</option>
+          )}
+          {UPLOAD_TABLES.map((t) => (
+            <option key={t.key} value={t.key}>
+              {t.label} ({t.key})
+            </option>
+          ))}
+        </select>
         <div className="mt-4 flex justify-end gap-2">
           {initialValue && (
             <button
@@ -98,7 +113,7 @@ function DependencyModal({
             Cancel
           </button>
           <button
-            onClick={() => onSave(value.trim() || null)}
+            onClick={() => onSave(value || null)}
             className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
           >
             Save
@@ -747,7 +762,9 @@ export default function PipelineCanvasPage() {
                               }`}
                             >
                               <IconLink className="h-2.5 w-2.5" />
-                              {proc.dependsOnDataset ?? "No dependency"}
+                              {proc.dependsOnDataset
+                                ? (UPLOAD_TABLES.find((t) => t.key === proc.dependsOnDataset)?.label ?? proc.dependsOnDataset)
+                                : "No dependency"}
                             </button>
                             <button onClick={() => handleRemoveProcedure(proc.pipelineProcedureId)} className="shrink-0 text-zinc-300 hover:text-red-500">
                               <IconTrash className="h-3.5 w-3.5" />
