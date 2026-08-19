@@ -58,7 +58,8 @@ function fullName(p: { procedureName: string; packageName: string | null }) {
 
 type DragPayload =
   | { type: "catalog"; procedureId: number }
-  | { type: "group-proc"; pipelineProcedureId: number; fromGroupId: number };
+  | { type: "group-proc"; pipelineProcedureId: number; fromGroupId: number }
+  | { type: "group"; groupId: number };
 
 // ─── Dependency modal ─────────────────────────────────────────────────────────
 
@@ -349,6 +350,23 @@ export default function PipelineCanvasPage() {
 
     const group = structure.groups.find((g) => g.id === groupId);
     if (!group) return;
+
+    if (payload.type === "group") {
+      if (payload.groupId === groupId) return;
+      const orderedIds = structure.groups.map((g) => g.id);
+      const fromIdx = orderedIds.indexOf(payload.groupId);
+      const toIdx = orderedIds.indexOf(groupId);
+      if (fromIdx === -1 || toIdx === -1) return;
+      orderedIds.splice(fromIdx, 1);
+      orderedIds.splice(toIdx, 0, payload.groupId);
+      await fetch(`/api/pipeline-builder/${pipelineId}/groups`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderedGroupIds: orderedIds }),
+      });
+      load();
+      return;
+    }
 
     if (payload.type === "catalog") {
       const sortOrder = targetIndex ?? group.procedures.length;
@@ -661,7 +679,16 @@ export default function PipelineCanvasPage() {
                 >
                   {/* Group header */}
                   <div className="flex items-center gap-2 px-3.5 py-2.5" style={{ background: col.bg }}>
-                    <IconGripVertical className="h-4 w-4 shrink-0 cursor-grab text-zinc-400" />
+                    <IconGripVertical
+                      draggable
+                      onDragStart={(e) => {
+                        dragPayload.current = { type: "group", groupId: group.id };
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", String(group.id));
+                      }}
+                      className="h-4 w-4 shrink-0 cursor-grab text-zinc-400 active:cursor-grabbing"
+                      aria-label={`Drag to reorder ${group.name}`}
+                    />
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: col.dot }} />
                     {renamingGroupId === group.id ? (
                       <input
