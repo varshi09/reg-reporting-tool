@@ -174,45 +174,38 @@ type HistoryEntry = {
 };
 
 function LogModal({
-  pipelineId,
   pipelineName,
   timeKey,
+  groups,
   onClose,
 }: {
-  pipelineId: number;
   pipelineName: string;
   timeKey: string;
+  groups: GroupRunState[];
   onClose: () => void;
 }) {
-  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
-
-  useEffect(() => {
-    fetch(`/api/pipelines/${pipelineId}/procedures/history?timeKey=${timeKey}`)
-      .then((r) => r.json())
-      .then((d) => setHistory(d.history ?? []));
-  }, [pipelineId, timeKey]);
+  const rows = groups.flatMap((g) => g.procedures.map((p) => ({ groupName: g.group.name, p })));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="flex max-h-[85vh] w-full max-w-5xl flex-col rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
           <div>
-            <p className="text-sm font-semibold text-zinc-900">Run log — {pipelineName}</p>
-            <p className="text-xs text-zinc-500">Period: {timeKey}</p>
+            <p className="text-sm font-semibold text-zinc-900">Status log — {pipelineName}</p>
+            <p className="text-xs text-zinc-500">Period: {timeKey} · current status of every procedure</p>
           </div>
           <button onClick={onClose} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50">
             Close
           </button>
         </div>
         <div className="flex-1 overflow-auto p-5">
-          {history === null ? (
-            <p className="text-sm text-zinc-500">Loading…</p>
-          ) : history.length === 0 ? (
-            <p className="text-sm text-zinc-500">No runs logged for this period.</p>
+          {rows.length === 0 ? (
+            <p className="text-sm text-zinc-500">No procedures configured.</p>
           ) : (
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-zinc-200 text-zinc-500">
+                  <th className="py-2 pr-3 font-medium">Group</th>
                   <th className="py-2 pr-3 font-medium">Procedure</th>
                   <th className="py-2 pr-3 font-medium">Package</th>
                   <th className="py-2 pr-3 font-medium">Status</th>
@@ -223,21 +216,23 @@ function LogModal({
                 </tr>
               </thead>
               <tbody>
-                {history.map((h) => {
-                  const m = STATUS_META[h.status];
+                {rows.map(({ groupName, p }) => {
+                  const m = STATUS_META[p.status];
+                  const note = p.note ?? (p.isBlocked ? p.blockedReason : null);
                   return (
-                    <tr key={h.id} className="border-b border-zinc-50 align-top text-zinc-700">
-                      <td className="py-2 pr-3 font-medium text-zinc-900">{h.procedureName}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{h.packageName ?? "—"}</td>
+                    <tr key={p.proc.pipelineProcedureId} className="border-b border-zinc-50 align-top text-zinc-700">
+                      <td className="py-2 pr-3 text-zinc-500">{groupName}</td>
+                      <td className="py-2 pr-3 font-medium text-zinc-900">{p.proc.procedureName}</td>
+                      <td className="py-2 pr-3 text-zinc-500">{p.proc.packageName ?? "—"}</td>
                       <td className="py-2 pr-3">
                         <span className="rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: m.bg, color: m.text }}>
                           {m.label}
                         </span>
                       </td>
-                      <td className="py-2 pr-3 text-zinc-500">{fmtDT(h.startTime)}</td>
-                      <td className="py-2 pr-3 text-zinc-500">{fmtDT(h.endTime)}</td>
-                      <td className="max-w-xs py-2 pr-3 text-zinc-600">{h.note ?? "—"}</td>
-                      <td className="py-2 text-zinc-500">{h.updatedBy}</td>
+                      <td className="py-2 pr-3 text-zinc-500">{p.startTime ? fmtDT(p.startTime) : "—"}</td>
+                      <td className="py-2 pr-3 text-zinc-500">{p.endTime ? fmtDT(p.endTime) : "—"}</td>
+                      <td className="max-w-xs py-2 pr-3 text-zinc-600">{note ?? "—"}</td>
+                      <td className="py-2 text-zinc-500">{p.updatedBy ?? "—"}</td>
                     </tr>
                   );
                 })}
@@ -701,9 +696,9 @@ export default function PipelineDetailPage() {
 
       {showLog && (
         <LogModal
-          pipelineId={state.pipelineId}
           pipelineName={state.pipelineName}
           timeKey={timeKey}
+          groups={state.groups}
           onClose={() => setShowLog(false)}
         />
       )}
