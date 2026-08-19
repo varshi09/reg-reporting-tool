@@ -37,6 +37,14 @@ function buildDrillUrl(
   return `/reports/brf01/detail?${params.toString()}`;
 }
 
+function buildTrendUrl(filters: AppliedFilters): string {
+  const params = new URLSearchParams();
+  filters.entityGroups.forEach((eg) => params.append("entityGroup", eg));
+  filters.dataSources.forEach((ds) => params.append("dataSource", ds));
+  if (filters.timeKey) params.set("timeKey", filters.timeKey.replace(/-/g, ""));
+  return `/reports/brf01/trend?${params.toString()}`;
+}
+
 /** A bucket cell (accounts or amount) that opens the drill-down page in a new tab when it has a real value. */
 function DrillCell({
   value,
@@ -146,12 +154,20 @@ export default function Brf01ReportPage() {
             <p className="text-sm font-semibold text-black">
               CBUAE Banking Return Form 01 — Assets
             </p>
-            <button
-              onClick={handleDownload}
-              className="shrink-0 rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100"
-            >
-              Download Report
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <a
+                href={appliedFilters ? buildTrendUrl(appliedFilters) : "#"}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100"
+              >
+                Analysis
+              </a>
+              <button
+                onClick={handleDownload}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100"
+              >
+                Download Report
+              </button>
+            </div>
           </div>
 
           <div className="mt-4 flex flex-wrap items-end gap-6">
