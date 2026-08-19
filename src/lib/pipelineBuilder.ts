@@ -293,6 +293,13 @@ export async function reorderGroups(
 
 // ─── Procedures within groups ───────────────────────────────────────────────
 
+/**
+ * Deleting a group sets its procedures' group_id to NULL rather than
+ * deleting the PIPELINE_PROCEDURES row (see deleteGroup) - "returned to
+ * the catalog" but the row, and its PK on (pipeline_id, procedure_id),
+ * still exists. Re-attaching that same procedure must therefore be an
+ * upsert, not a plain INSERT, or it collides with the leftover row.
+ */
 export async function addProcedureToGroup(
   pipelineId: number,
   groupId: number,
@@ -301,17 +308,26 @@ export async function addProcedureToGroup(
   dependsOnDataset: string | null
 ): Promise<number> {
   return withConnection(async (connection) => {
-    const result = await connection.execute<{ ID: number[] }>(
-      `INSERT INTO PIPELINE_PROCEDURES (pipeline_id, group_id, procedure_id, sort_order, depends_on_dataset)
-       VALUES (:pipelineId, :groupId, :procedureId, :sortOrder, :dependsOnDataset) RETURNING id INTO :id`,
+    await connection.execute(
+      `MERGE INTO PIPELINE_PROCEDURES tgt
+       USING (SELECT :pipelineId AS pipeline_id, :procedureId AS procedure_id FROM dual) src
+       ON (tgt.pipeline_id = src.pipeline_id AND tgt.procedure_id = src.procedure_id)
+       WHEN MATCHED THEN UPDATE SET
+         group_id = :groupId1, sort_order = :sortOrder1, depends_on_dataset = :dependsOnDataset1
+       WHEN NOT MATCHED THEN INSERT (pipeline_id, group_id, procedure_id, sort_order, depends_on_dataset)
+         VALUES (:pipelineId, :groupId2, :procedureId, :sortOrder2, :dependsOnDataset2)`,
       {
-        pipelineId, groupId, procedureId, sortOrder,
-        dependsOnDataset: dependsOnDataset ?? null,
-        id: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
+        pipelineId, procedureId,
+        groupId1: groupId, sortOrder1: sortOrder, dependsOnDataset1: dependsOnDataset ?? null,
+        groupId2: groupId, sortOrder2: sortOrder, dependsOnDataset2: dependsOnDataset ?? null,
       },
       { autoCommit: true }
     );
-    return (result.outBinds as { id: number[] }).id[0];
+    const result = await connection.execute<{ ID: number }>(
+      `SELECT id FROM PIPELINE_PROCEDURES WHERE pipeline_id = :pipelineId AND procedure_id = :procedureId`,
+      { pipelineId, procedureId }
+    );
+    return result.rows![0].ID;
   });
 }
 

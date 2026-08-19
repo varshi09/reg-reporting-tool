@@ -132,6 +132,7 @@ export default function PipelineCanvasPage() {
   const [renamingPipeline, setRenamingPipeline] = useState(false);
   const [pipelineNameValue, setPipelineNameValue] = useState("");
   const [pipelineRenameError, setPipelineRenameError] = useState<string | null>(null);
+  const [dropError, setDropError] = useState<string | null>(null);
   const dragPayload = useRef<DragPayload | null>(null);
 
   const load = useCallback(async () => {
@@ -288,11 +289,16 @@ export default function PipelineCanvasPage() {
 
     if (payload.type === "catalog") {
       const sortOrder = targetIndex ?? group.procedures.length;
-      await fetch(`/api/pipeline-builder/${pipelineId}/groups/${groupId}/procedures`, {
+      setDropError(null);
+      const res = await fetch(`/api/pipeline-builder/${pipelineId}/groups/${groupId}/procedures`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ procedureId: payload.procedureId, sortOrder }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setDropError(data.error ?? `Couldn't add that procedure (${res.status}).`);
+      }
       load();
       return;
     }
@@ -471,6 +477,15 @@ export default function PipelineCanvasPage() {
           </div>
         </div>
 
+        {dropError && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2 text-xs text-red-700">
+            <span>{dropError}</span>
+            <button onClick={() => setDropError(null)} className="shrink-0 rounded p-0.5 hover:bg-red-100">
+              <IconX className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Two-panel layout */}
         <div className="flex gap-4">
           {/* Catalog */}
@@ -568,6 +583,13 @@ export default function PipelineCanvasPage() {
               return (
                 <div
                   key={group.id}
+                  onDragEnter={(e) => { e.preventDefault(); setDragOverGroup(group.id); }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverGroup(group.id); }}
+                  onDragLeave={(e) => {
+                    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                    setDragOverGroup((cur) => (cur === group.id ? null : cur));
+                  }}
+                  onDrop={(e) => { e.preventDefault(); handleDropOnGroup(group.id); }}
                   className="rounded-xl border-2 overflow-hidden"
                   style={{ borderColor: isDragOver ? col.border : `${col.border}80` }}
                 >
@@ -633,13 +655,10 @@ export default function PipelineCanvasPage() {
                     </button>
                   </div>
 
-                  {/* Drop zone / procedures */}
-                  <div
-                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverGroup(group.id); }}
-                    onDragLeave={() => setDragOverGroup((cur) => (cur === group.id ? null : cur))}
-                    onDrop={(e) => { e.preventDefault(); handleDropOnGroup(group.id); }}
-                    className="bg-white p-3"
-                  >
+                  {/* Procedures - drag handling lives on the outer group container now,
+                      so a drop anywhere on the card (including the header) is caught;
+                      this div only needs to render content. */}
+                  <div className="bg-white p-3">
                     {group.procedures.length === 0 ? (
                       <>
                         <div className="mb-3 flex items-center gap-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
@@ -667,6 +686,7 @@ export default function PipelineCanvasPage() {
                               e.dataTransfer.effectAllowed = "move";
                               e.dataTransfer.setData("text/plain", String(proc.pipelineProcedureId));
                             }}
+                            onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverGroup(group.id); }}
                             onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; setDragOverGroup(group.id); }}
                             onDrop={(e) => { e.preventDefault(); e.stopPropagation(); handleDropOnGroup(group.id, pi); }}
                             className="flex cursor-grab items-center gap-2.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 active:cursor-grabbing"
