@@ -567,22 +567,45 @@ async function runGroupProcedure(
   triggeredBy: string,
   overrideType: string | null
 ): Promise<{ status: "COMPLETED" | "FAILED"; error?: string }> {
-  const startedAt: Date = await withConnection(async (conn) => {
-    const r = await conn.execute<{ ST: Date[] }>(
+  // One physical row per attempt, not per state transition: a standing
+  // approval (PENDING) row is continued in place rather than superseded, so
+  // starting the run just updates it to IN_PROGRESS. A FAILED/COMPLETED row
+  // from an earlier attempt is permanent history though, so a genuinely new
+  // attempt always gets its own fresh row - never overwrites one.
+  const runId: number = await withConnection(async (conn) => {
+    const existing = await conn.execute<{ ID: number; STATUS: string }>(
+      `SELECT id, status FROM PIPELINE_PROCEDURE_RUNS
+       WHERE pipeline_id = :pipelineId AND procedure_id = :procedureId AND time_key = :timeKey
+       ORDER BY updated_at DESC FETCH FIRST 1 ROWS ONLY`,
+      { pipelineId, procedureId: proc.procedureId, timeKey }
+    );
+    const latest = existing.rows?.[0];
+
+    if (latest && latest.STATUS === "PENDING") {
+      await conn.execute(
+        `UPDATE PIPELINE_PROCEDURE_RUNS SET status = 'IN_PROGRESS', start_time = LOCALTIMESTAMP, updated_by = :updatedBy
+         WHERE id = :id`,
+        { id: latest.ID, updatedBy: triggeredBy },
+        { autoCommit: true }
+      );
+      return latest.ID;
+    }
+
+    const r = await conn.execute<{ ID: number[] }>(
       `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, start_time, updated_by)
        VALUES (:pipelineId, :procedureId, :timeKey, 'IN_PROGRESS', :overrideType, LOCALTIMESTAMP, :updatedBy)
-       RETURNING start_time INTO :st`,
+       RETURNING id INTO :id`,
       {
         pipelineId,
         procedureId: proc.procedureId,
         timeKey,
         overrideType,
         updatedBy: triggeredBy,
-        st: { dir: oracledb.BIND_OUT, type: oracledb.DB_TYPE_TIMESTAMP },
+        id: { dir: oracledb.BIND_OUT, type: oracledb.DB_TYPE_NUMBER },
       },
       { autoCommit: true }
     );
-    return (r.outBinds as { st: Date[] }).st[0];
+    return (r.outBinds as { id: number[] }).id[0];
   });
 
   const target = proc.packageName
@@ -598,9 +621,8 @@ async function runGroupProcedure(
     await withConnection((conn) => conn.execute(block, { timeKey }, { autoCommit: true }));
     await withConnection((conn) =>
       conn.execute(
-        `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, start_time, end_time, updated_by)
-         VALUES (:pipelineId, :procedureId, :timeKey, 'COMPLETED', :overrideType, :startedAt, LOCALTIMESTAMP, :updatedBy)`,
-        { pipelineId, procedureId: proc.procedureId, timeKey, overrideType, startedAt, updatedBy: triggeredBy },
+        `UPDATE PIPELINE_PROCEDURE_RUNS SET status = 'COMPLETED', end_time = LOCALTIMESTAMP, updated_by = :updatedBy WHERE id = :id`,
+        { id: runId, updatedBy: triggeredBy },
         { autoCommit: true }
       )
     );
@@ -609,12 +631,8 @@ async function runGroupProcedure(
     const message = err instanceof Error ? err.message : String(err);
     await withConnection((conn) =>
       conn.execute(
-        `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, start_time, end_time, note, updated_by)
-         VALUES (:pipelineId, :procedureId, :timeKey, 'FAILED', :overrideType, :startedAt, LOCALTIMESTAMP, :note, :updatedBy)`,
-        {
-          pipelineId, procedureId: proc.procedureId, timeKey, overrideType,
-          startedAt, note: message.slice(0, 1000), updatedBy: triggeredBy,
-        },
+        `UPDATE PIPELINE_PROCEDURE_RUNS SET status = 'FAILED', end_time = LOCALTIMESTAMP, note = :note, updated_by = :updatedBy WHERE id = :id`,
+        { id: runId, note: message.slice(0, 1000), updatedBy: triggeredBy },
         { autoCommit: true }
       )
     );
