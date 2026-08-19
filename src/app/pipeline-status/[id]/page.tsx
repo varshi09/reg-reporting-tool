@@ -737,7 +737,10 @@ export default function PipelineDetailPage() {
                       <div
                         key={p.proc.pipelineProcedureId}
                         className="rounded-lg border px-3 py-2.5"
-                        style={{ borderColor: p.isBlocked ? "#FCD34D" : "#E4E4E7", background: p.isBlocked ? "#FFFBEB" : "#fff" }}
+                        style={{
+                          borderColor: p.isBlocked ? "#FCD34D" : p.status === "FAILED" ? "#FCA5A5" : "#E4E4E7",
+                          background: p.isBlocked ? "#FFFBEB" : p.status === "FAILED" ? "#FEF2F2" : "#fff",
+                        }}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="flex min-w-0 items-center gap-2">
@@ -771,6 +774,9 @@ export default function PipelineDetailPage() {
                         )}
                         {p.isBlocked && p.blockedReason && (
                           <p className="ml-6 mt-1 text-[10px] text-amber-700">{p.blockedReason}</p>
+                        )}
+                        {p.status === "FAILED" && p.note && (
+                          <p className="ml-6 mt-1 text-[10px] font-medium text-red-700">Error: {p.note}</p>
                         )}
                         {canApprove(p) && (
                           <div className="ml-6 mt-1">
