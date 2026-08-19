@@ -115,26 +115,105 @@ export async function getPipelineStructure(pipelineId: number): Promise<Pipeline
   });
 }
 
+/**
+ * The catalog is a live mirror of Oracle's own data dictionary - never
+ * user-editable. Every call re-reads USER_PROCEDURES/USER_ARGUMENTS for
+ * every packaged procedure that actually exists right now, upserts that
+ * into PROCEDURES (which only exists to give PIPELINE_PROCEDURES a stable
+ * numeric FK target), and returns exactly that live set. Add or drop a
+ * package/procedure in the DB and the catalog reflects it on the very next
+ * read - nothing here can be added, renamed, or removed from the app side.
+ */
 export async function getCatalogProcedures(): Promise<CatalogProcedure[]> {
-  type Row = {
-    ID: number; PROCEDURE_NAME: string; PACKAGE_NAME: string | null;
-    TAKES_DATE_PARAM: number; TAKES_SCOPE_PARAM: number;
+  type LiveRow = {
+    PACKAGE_NAME: string;
+    PROCEDURE_NAME: string;
+    TAKES_DATE_PARAM: number;
+    TAKES_SCOPE_PARAM: number;
   };
-  const rows: Row[] = await withConnection(async (connection) => {
-    const result = await connection.execute<Row>(
-      `SELECT id, procedure_name, package_name, takes_date_param, takes_scope_param
-       FROM PROCEDURES ORDER BY package_name NULLS LAST, procedure_name`,
-      []
+
+  const live: LiveRow[] = await withConnection(async (connection) => {
+    const result = await connection.execute<LiveRow>(
+      `SELECT p.object_name AS package_name, p.procedure_name,
+              MAX(CASE WHEN a.argument_name = 'P_DATE' THEN 1 ELSE 0 END) AS takes_date_param,
+              MAX(CASE WHEN a.argument_name = 'P_SCOPE' THEN 1 ELSE 0 END) AS takes_scope_param
+       FROM USER_PROCEDURES p
+       LEFT JOIN USER_ARGUMENTS a
+         ON a.package_name = p.object_name AND a.object_name = p.procedure_name
+       WHERE p.object_type = 'PACKAGE' AND p.procedure_name IS NOT NULL
+       GROUP BY p.object_name, p.procedure_name
+       ORDER BY p.object_name, p.procedure_name`
     );
     return result.rows ?? [];
   });
-  return rows.map((r) => ({
-    id: r.ID,
-    procedureName: r.PROCEDURE_NAME,
-    packageName: r.PACKAGE_NAME,
-    takesDateParam: r.TAKES_DATE_PARAM === 1,
-    takesScopeParam: r.TAKES_SCOPE_PARAM === 1,
-  }));
+
+  await withConnection(async (connection) => {
+    for (const row of live) {
+      await connection.execute(
+        `MERGE INTO PROCEDURES tgt
+         USING (SELECT :packageName AS package_name, :procedureName AS procedure_name FROM dual) src
+         ON (tgt.package_name = src.package_name AND tgt.procedure_name = src.procedure_name)
+         WHEN MATCHED THEN UPDATE SET
+           takes_date_param = :takesDateParam, takes_scope_param = :takesScopeParam
+         WHEN NOT MATCHED THEN INSERT (procedure_name, package_name, stage, takes_date_param, takes_scope_param, created_by)
+           VALUES (:procedureName, :packageName, 'SOURCE_LOADED', :takesDateParam, :takesScopeParam, 'system-sync')`,
+        {
+          packageName: row.PACKAGE_NAME,
+          procedureName: row.PROCEDURE_NAME,
+          takesDateParam: row.TAKES_DATE_PARAM,
+          takesScopeParam: row.TAKES_SCOPE_PARAM,
+        },
+        { autoCommit: false }
+      );
+    }
+
+    // Drop any PROCEDURES row that no longer matches a live physical procedure,
+    // as long as nothing still references it - if a pipeline still points at a
+    // since-dropped procedure, leave the row so that pipeline doesn't break.
+    await connection.execute(
+      `DELETE FROM PROCEDURES p
+       WHERE p.id NOT IN (SELECT procedure_id FROM PIPELINE_PROCEDURES)
+         AND NOT EXISTS (
+           SELECT 1 FROM (
+             SELECT up.object_name AS package_name, up.procedure_name
+             FROM USER_PROCEDURES up
+             WHERE up.object_type = 'PACKAGE' AND up.procedure_name IS NOT NULL
+           ) live
+           WHERE live.package_name = p.package_name AND live.procedure_name = p.procedure_name
+         )`,
+      {},
+      { autoCommit: true }
+    );
+  });
+
+  // Only ever return rows that match a currently-live physical procedure -
+  // a PROCEDURES row kept alive by an existing pipeline reference (see the
+  // DELETE above) must not resurface in the catalog once its underlying
+  // package/procedure is gone.
+  type Row = { ID: number; PROCEDURE_NAME: string; PACKAGE_NAME: string };
+  const rows: Row[] = await withConnection(async (connection) => {
+    const result = await connection.execute<Row>(
+      `SELECT p.id, p.procedure_name, p.package_name
+       FROM PROCEDURES p
+       JOIN USER_PROCEDURES up
+         ON up.object_name = p.package_name AND up.procedure_name = p.procedure_name
+       WHERE up.object_type = 'PACKAGE'
+       ORDER BY p.package_name, p.procedure_name`
+    );
+    return result.rows ?? [];
+  });
+
+  const liveByKey = new Map(live.map((r) => [`${r.PACKAGE_NAME}.${r.PROCEDURE_NAME}`, r]));
+  return rows.map((r) => {
+    const l = liveByKey.get(`${r.PACKAGE_NAME}.${r.PROCEDURE_NAME}`)!;
+    return {
+      id: r.ID,
+      procedureName: r.PROCEDURE_NAME,
+      packageName: r.PACKAGE_NAME,
+      takesDateParam: l.TAKES_DATE_PARAM === 1,
+      takesScopeParam: l.TAKES_SCOPE_PARAM === 1,
+    };
+  });
 }
 
 // ─── Groups ────────────────────────────────────────────────────────────────

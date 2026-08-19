@@ -242,10 +242,12 @@ export async function overrideProcedure(
 /**
  * Actually triggers the real stored procedure via EXEC - this is the
  * "functional, not informative" trigger. Package/procedure names always
- * come from our own PROCEDURES table (only admins can create rows there via
- * createProcedure), never from raw request input, so building the PL/SQL
- * block from them is the same trust boundary as the dataset whitelist in
- * uploadInsert.ts - not a SQL injection risk.
+ * come from our own PROCEDURES table, which is a read-only mirror kept in
+ * sync with Oracle's own USER_PROCEDURES/USER_ARGUMENTS (see
+ * getCatalogProcedures in pipelineBuilder.ts) - never from raw request
+ * input and never user-editable, so building the PL/SQL block from them is
+ * the same trust boundary as the dataset whitelist in uploadInsert.ts -
+ * not a SQL injection risk.
  *
  * Date argument is unified to 'DD-MON-YYYY' across every procedure. Two
  * audit rows are written (IN_PROGRESS, then COMPLETED/FAILED) rather than
@@ -394,31 +396,6 @@ export async function getRunHistory(pipelineId: number, timeKey: string, limit =
     updatedBy: r.UPDATED_BY,
     updatedAt: r.UPDATED_AT,
   }));
-}
-
-export async function createProcedure(
-  procedureName: string,
-  packageName: string | null,
-  stage: PipelineStageKey,
-  dependsOnDataset: string | null,
-  createdBy: string
-): Promise<number> {
-  return withConnection(async (connection) => {
-    const result = await connection.execute<{ ID: number[] }>(
-      `INSERT INTO PROCEDURES (procedure_name, package_name, stage, depends_on_dataset, created_by)
-       VALUES (:procedureName, :packageName, :stage, :dependsOnDataset, :createdBy) RETURNING id INTO :id`,
-      {
-        procedureName,
-        packageName,
-        stage,
-        dependsOnDataset,
-        createdBy,
-        id: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
-      },
-      { autoCommit: true }
-    );
-    return (result.outBinds as { id: number[] }).id[0];
-  });
 }
 
 export async function attachProcedureToPipeline(
