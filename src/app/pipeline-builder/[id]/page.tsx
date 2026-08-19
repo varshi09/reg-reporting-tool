@@ -525,7 +525,11 @@ export default function PipelineCanvasPage() {
                             <div
                               key={p.id}
                               draggable
-                              onDragStart={() => { dragPayload.current = { type: "catalog", procedureId: p.id }; }}
+                              onDragStart={(e) => {
+                                dragPayload.current = { type: "catalog", procedureId: p.id };
+                                e.dataTransfer.effectAllowed = "move";
+                                e.dataTransfer.setData("text/plain", String(p.id));
+                              }}
                               className="flex cursor-grab items-center gap-1.5 rounded-md bg-white px-2 py-1.5 text-xs text-zinc-700 shadow-sm active:cursor-grabbing"
                             >
                               <IconGripVertical className="h-3 w-3 shrink-0 text-zinc-300" />
@@ -631,7 +635,7 @@ export default function PipelineCanvasPage() {
 
                   {/* Drop zone / procedures */}
                   <div
-                    onDragOver={(e) => { e.preventDefault(); setDragOverGroup(group.id); }}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverGroup(group.id); }}
                     onDragLeave={() => setDragOverGroup((cur) => (cur === group.id ? null : cur))}
                     onDrop={(e) => { e.preventDefault(); handleDropOnGroup(group.id); }}
                     className="bg-white p-3"
@@ -654,14 +658,16 @@ export default function PipelineCanvasPage() {
                           <div
                             key={proc.pipelineProcedureId}
                             draggable
-                            onDragStart={() => {
+                            onDragStart={(e) => {
                               dragPayload.current = {
                                 type: "group-proc",
                                 pipelineProcedureId: proc.pipelineProcedureId,
                                 fromGroupId: group.id,
                               };
+                              e.dataTransfer.effectAllowed = "move";
+                              e.dataTransfer.setData("text/plain", String(proc.pipelineProcedureId));
                             }}
-                            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverGroup(group.id); }}
+                            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; setDragOverGroup(group.id); }}
                             onDrop={(e) => { e.preventDefault(); e.stopPropagation(); handleDropOnGroup(group.id, pi); }}
                             className="flex cursor-grab items-center gap-2.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 active:cursor-grabbing"
                           >
