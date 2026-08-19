@@ -371,3 +371,12 @@ export function IconSave(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function IconCopy(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="9" y="9" width="11" height="11" rx="1.5" />
+      <path d="M6 15H5.5A1.5 1.5 0 0 1 4 13.5v-8A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V6" />
+    </svg>
+  );
+}

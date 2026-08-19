@@ -1,5 +1,6 @@
 import oracledb from "oracledb";
 import { withConnection } from "@/lib/db";
+import { createPipeline } from "@/lib/pipelines";
 import type { PipelineStatus } from "@/lib/pipelineStages";
 
 export type ExecMode = "SEQUENTIAL" | "PARALLEL";
@@ -117,6 +118,41 @@ export async function getPipelineStructure(pipelineId: number): Promise<Pipeline
       groups,
     };
   });
+}
+
+/**
+ * Copies a pipeline's groups and procedures (names, exec mode, sort order,
+ * dataset dependencies) into a brand-new pipeline, so it starts
+ * pre-configured and can be edited from there rather than built from
+ * scratch. Run history stays with the source - the new pipeline starts
+ * with a clean PIPELINE_PROCEDURE_RUNS slate.
+ */
+export async function duplicatePipeline(
+  sourcePipelineId: number,
+  newName: string,
+  createdBy: string
+): Promise<{ id: number } | { error: string }> {
+  const source = await getPipelineStructure(sourcePipelineId);
+  if (!source) return { error: "Source pipeline not found." };
+
+  let newPipelineId: number;
+  try {
+    newPipelineId = await createPipeline(newName, createdBy);
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("ORA-00001")) {
+      return { error: "A pipeline with that name already exists." };
+    }
+    throw err;
+  }
+
+  for (const group of source.groups) {
+    const newGroupId = await createGroup(newPipelineId, group.name, group.sortOrder, group.execMode, createdBy);
+    for (const proc of group.procedures) {
+      await addProcedureToGroup(newPipelineId, newGroupId, proc.procedureId, proc.sortOrder, proc.dependsOnDataset);
+    }
+  }
+
+  return { id: newPipelineId };
 }
 
 /**

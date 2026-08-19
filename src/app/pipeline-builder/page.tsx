@@ -17,6 +17,7 @@ import {
   IconTrash,
   IconCheck,
   IconX,
+  IconCopy,
 } from "@/components/icons";
 import type { Pipeline } from "@/lib/pipelines";
 
@@ -48,6 +49,11 @@ export default function PipelineBuilderListPage() {
   const [renameValue, setRenameValue] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
+
+  const [duplicatingFrom, setDuplicatingFrom] = useState<Pipeline | null>(null);
+  const [duplicateName, setDuplicateName] = useState("");
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [duplicating, setDuplicating] = useState(false);
 
   const period = getReportingPeriod();
 
@@ -134,6 +140,33 @@ export default function PipelineBuilderListPage() {
     }
     setRenamingId(null);
     load();
+  }
+
+  function openDuplicate(p: Pipeline) {
+    setMenuOpenId(null);
+    setDuplicatingFrom(p);
+    setDuplicateName(`${p.name} (copy)`);
+    setDuplicateError(null);
+  }
+
+  async function handleDuplicateSave() {
+    if (!duplicatingFrom) return;
+    const name = duplicateName.trim();
+    if (!name) return;
+    setDuplicating(true);
+    setDuplicateError(null);
+    const res = await fetch(`/api/pipelines/${duplicatingFrom.id}/duplicate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setDuplicateError(data.error ?? "Couldn't duplicate pipeline.");
+      setDuplicating(false);
+      return;
+    }
+    router.push(`/pipeline-builder/${data.id}`);
   }
 
   if (!username) return null;
@@ -367,6 +400,13 @@ export default function PipelineBuilderListPage() {
                             <IconPencil className="h-3.5 w-3.5" />
                             Rename pipeline
                           </button>
+                          <button
+                            onClick={() => openDuplicate(p)}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
+                          >
+                            <IconCopy className="h-3.5 w-3.5" />
+                            Duplicate
+                          </button>
                           {p.isActive ? (
                             <button
                               onClick={() => handleArchive(p)}
@@ -401,6 +441,41 @@ export default function PipelineBuilderListPage() {
           </div>
         )}
       </div>
+
+      {duplicatingFrom && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+            <p className="text-sm font-semibold text-zinc-900">Duplicate &ldquo;{duplicatingFrom.name}&rdquo;</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Copies its groups, procedures, and settings into a new pipeline you can edit from there. Run history isn&apos;t copied.
+            </p>
+            <input
+              value={duplicateName}
+              onChange={(e) => setDuplicateName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleDuplicateSave()}
+              autoFocus
+              className="mt-3 w-full rounded-lg border border-zinc-200 px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+            />
+            {duplicateError && <p className="mt-1.5 text-xs text-red-600">{duplicateError}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setDuplicatingFrom(null)}
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDuplicateSave}
+                disabled={duplicating || !duplicateName.trim()}
+                className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {duplicating ? <IconLoader className="h-3.5 w-3.5 animate-spin" /> : null}
+                {duplicating ? "Duplicating…" : "Duplicate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }
