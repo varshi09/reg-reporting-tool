@@ -248,6 +248,28 @@ function LogModal({
   );
 }
 
+const SHORT_MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/** "2026-07-31" -> "20260731" */
+function isoToTimeKey(iso: string): string {
+  return iso.replace(/-/g, "");
+}
+
+/** "20260731" -> "2026-07-31" */
+function timeKeyToIso(timeKey: string): string {
+  return `${timeKey.slice(0, 4)}-${timeKey.slice(4, 6)}-${timeKey.slice(6, 8)}`;
+}
+
+/** "2026-07-31" -> "31 Jul 2026" */
+function formatPickedDate(iso: string): string {
+  const [year, month, day] = iso.split("-").map(Number);
+  if (!year || !month || !day) return iso;
+  return `${day} ${SHORT_MONTH_NAMES[month - 1]} ${year}`;
+}
+
 function activityPhrase(h: HistoryEntry): string {
   if (h.status === "COMPLETED") return `${h.procedureName} completed`;
   if (h.status === "FAILED") return `${h.procedureName} failed`;
@@ -282,12 +304,30 @@ export default function PipelineDetailPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const period = getReportingPeriod();
+  const defaultTimeKey = getReportingPeriod().timeKey;
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const fromUrl = new URLSearchParams(window.location.search).get("date");
+      if (fromUrl && /^\d{4}-\d{2}-\d{2}$/.test(fromUrl)) return fromUrl;
+    }
+    return timeKeyToIso(defaultTimeKey);
+  });
+  const timeKey = isoToTimeKey(selectedDate);
+  const isCustomDate = timeKey !== defaultTimeKey;
+
+  function handleDateChange(iso: string) {
+    if (!iso) return;
+    setSelectedDate(iso);
+    const url = iso === timeKeyToIso(defaultTimeKey)
+      ? `/pipeline-status/${pipelineId}`
+      : `/pipeline-status/${pipelineId}?date=${iso}`;
+    router.replace(url, { scroll: false });
+  }
 
   const load = useCallback(async () => {
     const [stateRes, historyRes, usersRes, meRes] = await Promise.all([
-      fetch(`/api/pipeline-status/${pipelineId}?timeKey=${period.timeKey}`),
-      fetch(`/api/pipelines/${pipelineId}/procedures/history?timeKey=${period.timeKey}`),
+      fetch(`/api/pipeline-status/${pipelineId}?timeKey=${timeKey}`),
+      fetch(`/api/pipelines/${pipelineId}/procedures/history?timeKey=${timeKey}`),
       fetch("/api/users"),
       fetch("/api/auth/me"),
     ]);
@@ -304,7 +344,7 @@ export default function PipelineDetailPage() {
     }
     setLoading(false);
     setLastUpdated(new Date());
-  }, [pipelineId, period.timeKey]);
+  }, [pipelineId, timeKey]);
 
   useEffect(() => {
     if (!Number.isFinite(pipelineId)) return;
@@ -328,7 +368,7 @@ export default function PipelineDetailPage() {
       const res = await fetch(`/api/pipeline-status/${pipelineId}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, timeKey: period.timeKey }),
+        body: JSON.stringify({ mode, timeKey }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -394,7 +434,7 @@ export default function PipelineDetailPage() {
               )}
             </div>
             <p className="mt-1.5 text-sm text-zinc-500">
-              {period.periodLabel} cycle · {state.completedGroups} of {state.totalGroups} groups complete
+              {formatPickedDate(selectedDate)}{isCustomDate ? " (custom date)" : " cycle"} · {state.completedGroups} of {state.totalGroups} groups complete
             </p>
           </div>
 
@@ -404,6 +444,24 @@ export default function PipelineDetailPage() {
                 {runMsg.text}
               </span>
             )}
+            <div className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5">
+              <IconCalendar className="h-3.5 w-3.5 text-zinc-400" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => handleDateChange(e.target.value)}
+                className="bg-transparent text-xs font-medium text-zinc-700 outline-none"
+              />
+              {isCustomDate && (
+                <button
+                  onClick={() => handleDateChange(timeKeyToIso(defaultTimeKey))}
+                  className="ml-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
+                  title="Reset to current reporting period"
+                >
+                  Today's period
+                </button>
+              )}
+            </div>
             <button
               onClick={() => setShowLog(true)}
               className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
@@ -524,7 +582,7 @@ export default function PipelineDetailPage() {
             </div>
             <p className="mt-3 flex items-center gap-1.5 text-xs text-zinc-500">
               <IconCalendar className="h-3.5 w-3.5" />
-              Cycle period: {period.periodDateLabel}
+              {isCustomDate ? "Viewing date" : "Cycle period"}: {formatPickedDate(selectedDate)}
             </p>
           </div>
 
@@ -601,7 +659,7 @@ export default function PipelineDetailPage() {
         <LogModal
           pipelineId={state.pipelineId}
           pipelineName={state.pipelineName}
-          timeKey={period.timeKey}
+          timeKey={timeKey}
           onClose={() => setShowLog(false)}
         />
       )}
