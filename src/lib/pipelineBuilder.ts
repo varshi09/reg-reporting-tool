@@ -564,17 +564,19 @@ async function runGroupProcedure(
   pipelineId: number,
   proc: GroupProcedure,
   timeKey: string,
-  triggeredBy: string
+  triggeredBy: string,
+  overrideType: string | null
 ): Promise<{ status: "COMPLETED" | "FAILED"; error?: string }> {
   const startedAt: Date = await withConnection(async (conn) => {
     const r = await conn.execute<{ ST: Date[] }>(
-      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, updated_by)
-       VALUES (:pipelineId, :procedureId, :timeKey, 'IN_PROGRESS', LOCALTIMESTAMP, :updatedBy)
+      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, start_time, updated_by)
+       VALUES (:pipelineId, :procedureId, :timeKey, 'IN_PROGRESS', :overrideType, LOCALTIMESTAMP, :updatedBy)
        RETURNING start_time INTO :st`,
       {
         pipelineId,
         procedureId: proc.procedureId,
         timeKey,
+        overrideType,
         updatedBy: triggeredBy,
         st: { dir: oracledb.BIND_OUT, type: oracledb.DB_TYPE_TIMESTAMP },
       },
@@ -596,9 +598,9 @@ async function runGroupProcedure(
     await withConnection((conn) => conn.execute(block, { timeKey }, { autoCommit: true }));
     await withConnection((conn) =>
       conn.execute(
-        `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, end_time, updated_by)
-         VALUES (:pipelineId, :procedureId, :timeKey, 'COMPLETED', :startedAt, LOCALTIMESTAMP, :updatedBy)`,
-        { pipelineId, procedureId: proc.procedureId, timeKey, startedAt, updatedBy: triggeredBy },
+        `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, start_time, end_time, updated_by)
+         VALUES (:pipelineId, :procedureId, :timeKey, 'COMPLETED', :overrideType, :startedAt, LOCALTIMESTAMP, :updatedBy)`,
+        { pipelineId, procedureId: proc.procedureId, timeKey, overrideType, startedAt, updatedBy: triggeredBy },
         { autoCommit: true }
       )
     );
@@ -607,10 +609,10 @@ async function runGroupProcedure(
     const message = err instanceof Error ? err.message : String(err);
     await withConnection((conn) =>
       conn.execute(
-        `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, start_time, end_time, note, updated_by)
-         VALUES (:pipelineId, :procedureId, :timeKey, 'FAILED', :startedAt, LOCALTIMESTAMP, :note, :updatedBy)`,
+        `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, start_time, end_time, note, updated_by)
+         VALUES (:pipelineId, :procedureId, :timeKey, 'FAILED', :overrideType, :startedAt, LOCALTIMESTAMP, :note, :updatedBy)`,
         {
-          pipelineId, procedureId: proc.procedureId, timeKey,
+          pipelineId, procedureId: proc.procedureId, timeKey, overrideType,
           startedAt, note: message.slice(0, 1000), updatedBy: triggeredBy,
         },
         { autoCommit: true }
@@ -621,18 +623,18 @@ async function runGroupProcedure(
 }
 
 /**
- * Lets a user manually clear a blocked procedure's dependency check and mark
- * it done, for cases where the upstream data genuinely isn't coming through
- * UPLOAD_LOG (e.g. a manual/offline source) but the pipeline still needs to
- * proceed. Refuses anything that isn't actually blocked right now, so this
- * can't be used as a generic "mark complete" backdoor - and, just as
- * importantly, refuses anything that isn't the procedure actually next in
- * line: the pipeline's group order and each SEQUENTIAL group's own sort
- * order must still be honored, so an override can only ever unstick the one
- * procedure currently blocking forward progress, never let a later one jump
- * the queue.
+ * Lets a user pre-authorize a procedure to proceed without its upload
+ * dependency being approved, for cases where the upstream data genuinely
+ * isn't coming through UPLOAD_LOG (e.g. a manual/offline source). This only
+ * clears the block - it does not mark the procedure done or run its job.
+ * The approval can be granted at any time, even for a procedure several
+ * steps away, because it changes nothing about *when* the procedure runs:
+ * runNextInPipeline/runAllInPipeline still only ever advance the first
+ * not-yet-completed procedure in the pipeline's group order and each
+ * SEQUENTIAL group's own sort order, so an approved procedure simply stops
+ * blocking that walk once its own turn actually comes.
  */
-export async function overrideBlockedProcedure(
+export async function approveProcedureWithoutUpload(
   pipelineId: number,
   procedureId: number,
   timeKey: string,
@@ -642,26 +644,25 @@ export async function overrideBlockedProcedure(
   const state = await getPipelineRunState(pipelineId, timeKey);
   if (!state) return { ok: false, error: "Pipeline not found." };
 
-  const groupState = state.groups.find((g) => g.procedures.some((p) => p.proc.procedureId === procedureId));
-  const procState = groupState?.procedures.find((p) => p.proc.procedureId === procedureId);
-  if (!groupState || !procState) return { ok: false, error: "Procedure not found in this pipeline." };
-  if (!procState.isBlocked) return { ok: false, error: "This procedure is not currently blocked." };
-
-  const targetGroup = state.groups.find((g) => g.groupStatus !== "COMPLETED");
-  if (!targetGroup || targetGroup.group.id !== groupState.group.id) {
-    return { ok: false, error: "This procedure isn't next in the pipeline's sequence yet." };
+  const procState = state.groups.flatMap((g) => g.procedures).find((p) => p.proc.procedureId === procedureId);
+  if (!procState) return { ok: false, error: "Procedure not found in this pipeline." };
+  if (!procState.proc.dependsOnDataset) {
+    return { ok: false, error: "This procedure doesn't depend on an upload." };
   }
-  if (targetGroup.group.execMode === "SEQUENTIAL") {
-    const firstIncomplete = targetGroup.procedures.find((p) => p.status !== "COMPLETED");
-    if (!firstIncomplete || firstIncomplete.proc.procedureId !== procedureId) {
-      return { ok: false, error: "This procedure isn't next in its group's sequence yet." };
-    }
+  if (procState.status === "COMPLETED") {
+    return { ok: false, error: "This procedure has already completed." };
+  }
+  if (procState.status === "IN_PROGRESS") {
+    return { ok: false, error: "This procedure is currently running." };
+  }
+  if (procState.overrideType) {
+    return { ok: false, error: "This procedure is already approved to proceed without upload." };
   }
 
   await withConnection((conn) =>
     conn.execute(
-      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, start_time, end_time, note, updated_by)
-       VALUES (:pipelineId, :procedureId, :timeKey, 'COMPLETED', 'PROCEED_WITHOUT_UPLOAD', LOCALTIMESTAMP, LOCALTIMESTAMP, :note, :updatedBy)`,
+      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, note, updated_by)
+       VALUES (:pipelineId, :procedureId, :timeKey, 'PENDING', 'PROCEED_WITHOUT_UPLOAD', :note, :updatedBy)`,
       { pipelineId, procedureId, timeKey, note, updatedBy: triggeredBy },
       { autoCommit: true }
     )
@@ -704,7 +705,7 @@ export async function runNextInPipeline(
     );
     targetGroup.procedures.filter((p) => p.isBlocked).forEach((p) => blocked.push(p.proc.procedureName));
     const results = await Promise.all(
-      eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy))
+      eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy, p.overrideType))
     );
     eligible.forEach((p, i) => {
       if (results[i].status === "COMPLETED") ran.push(p.proc.procedureName);
@@ -716,7 +717,7 @@ export async function runNextInPipeline(
       const stuck = targetGroup.procedures.find((p) => p.status !== "COMPLETED");
       if (stuck) blocked.push(stuck.proc.procedureName);
     } else if (next) {
-      const result = await runGroupProcedure(pipelineId, next.proc, timeKey, triggeredBy);
+      const result = await runGroupProcedure(pipelineId, next.proc, timeKey, triggeredBy, next.overrideType);
       if (result.status === "COMPLETED") ran.push(next.proc.procedureName);
       else failed.push(next.proc.procedureName);
     }
@@ -758,7 +759,7 @@ export async function runAllInPipeline(
         groupBlockedOrFailed = true;
       });
       const results = await Promise.all(
-        eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy))
+        eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy, p.overrideType))
       );
       eligible.forEach((p, i) => {
         if (results[i].status === "COMPLETED") allRan.push(p.proc.procedureName);
@@ -779,7 +780,7 @@ export async function runAllInPipeline(
           break;
         }
         if (!next) break; // group fully complete
-        const result = await runGroupProcedure(pipelineId, next.proc, timeKey, triggeredBy);
+        const result = await runGroupProcedure(pipelineId, next.proc, timeKey, triggeredBy, next.overrideType);
         if (result.status === "COMPLETED") {
           allRan.push(next.proc.procedureName);
           procedures = procedures.map((p) =>

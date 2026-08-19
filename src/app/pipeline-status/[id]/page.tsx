@@ -93,8 +93,10 @@ function GroupStepper({ groups, onExpand }: { groups: GroupRunState[]; onExpand:
           .sort((a, b) => new Date(b.endTime!).getTime() - new Date(a.endTime!).getTime())[0];
 
         let detail: string | null = null;
-        if (gs.groupStatus === "PENDING" && idx > 0) detail = "Waiting on previous group";
-        else if (gs.groupStatus === "IN_PROGRESS" && running) {
+        if (gs.groupStatus === "PENDING") {
+          const prevComplete = idx === 0 || groups[idx - 1].groupStatus === "COMPLETED";
+          detail = prevComplete ? "Ready to run" : "Waiting on previous group";
+        } else if (gs.groupStatus === "IN_PROGRESS" && running) {
           const mins = relativeMinutes(running.startTime);
           detail = mins ? `Running · ${mins}` : "Running";
         } else if (gs.groupStatus === "COMPLETED" && latestCompleted) {
@@ -402,9 +404,9 @@ export default function PipelineDetailPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setRunMsg({ type: "err", text: data.error ?? "Could not proceed without upload." });
+        setRunMsg({ type: "err", text: data.error ?? "Could not approve without upload." });
       } else {
-        setRunMsg({ type: "ok", text: "Marked as proceeded without upload." });
+        setRunMsg({ type: "ok", text: "Approved to proceed without upload." });
         setOverridingProcId(null);
         setOverrideNote("");
         load();
@@ -439,19 +441,18 @@ export default function PipelineDetailPage() {
   const currentGroupRunning = currentGroup?.procedures.find((p) => p.status === "IN_PROGRESS");
   const currentGroupStarted = currentGroupRunning?.startTime ?? null;
 
-  // Mirrors the backend's overrideBlockedProcedure() guard: an override may
-  // only unstick the procedure actually next in line - the current group,
-  // and (for a SEQUENTIAL group) the first not-yet-completed procedure in
-  // sort order - never a later one, so overriding can't jump the queue.
-  function canOverride(gs: GroupRunState, p: GroupRunState["procedures"][number]): boolean {
-    if (!p.isBlocked) return false;
-    const targetGroup = state!.groups.find((g) => g.groupStatus !== "COMPLETED");
-    if (!targetGroup || targetGroup.group.id !== gs.group.id) return false;
-    if (gs.group.execMode === "SEQUENTIAL") {
-      const firstIncomplete = gs.procedures.find((x) => x.status !== "COMPLETED");
-      return firstIncomplete?.proc.procedureId === p.proc.procedureId;
-    }
-    return true;
+  // Approval only clears the upload-gate - it never marks a procedure done
+  // or runs it early, so it can be granted any time (even for a procedure
+  // several steps away) without letting anything jump the queue: Run
+  // next/Run all still only ever advance the pipeline's group order and
+  // each SEQUENTIAL group's own sort order, one procedure at a time.
+  function canApprove(p: GroupRunState["procedures"][number]): boolean {
+    return (
+      p.proc.dependsOnDataset !== null &&
+      p.status !== "COMPLETED" &&
+      p.status !== "IN_PROGRESS" &&
+      !p.overrideType
+    );
   }
 
   return (
@@ -764,23 +765,26 @@ export default function PipelineDetailPage() {
                         )}
                         {p.overrideType && (
                           <p className="ml-6 mt-1 text-[10px] font-medium text-amber-700">
-                            Proceeded without upload{p.updatedBy ? ` · by ${p.updatedBy}` : ""}
+                            {p.status === "COMPLETED"
+                              ? "Ran without upload"
+                              : p.status === "FAILED"
+                              ? "Approved without upload (failed — will retry without the gate)"
+                              : "Approved — will run without upload when its turn comes"}
+                            {p.updatedBy ? ` · by ${p.updatedBy}` : ""}
                             {p.note ? ` — ${p.note}` : ""}
                           </p>
                         )}
                         {p.isBlocked && p.blockedReason && (
+                          <p className="ml-6 mt-1 text-[10px] text-amber-700">{p.blockedReason}</p>
+                        )}
+                        {canApprove(p) && (
                           <div className="ml-6 mt-1">
-                            <p className="text-[10px] text-amber-700">{p.blockedReason}</p>
-                            {!canOverride(gs, p) ? (
-                              <p className="mt-1 text-[10px] text-zinc-400">
-                                Will become available to override once earlier procedures in the sequence complete
-                              </p>
-                            ) : overridingProcId === p.proc.procedureId ? (
-                              <div className="mt-1.5 flex flex-col gap-1.5">
+                            {overridingProcId === p.proc.procedureId ? (
+                              <div className="flex flex-col gap-1.5">
                                 <textarea
                                   value={overrideNote}
                                   onChange={(e) => setOverrideNote(e.target.value)}
-                                  placeholder="Reason for proceeding without the upload…"
+                                  placeholder="Reason for approving without the upload…"
                                   rows={2}
                                   className="w-full rounded border border-amber-300 bg-white px-2 py-1 text-[10px] text-zinc-700 outline-none"
                                 />
@@ -790,7 +794,7 @@ export default function PipelineDetailPage() {
                                     disabled={!overrideNote.trim() || overrideSubmitting}
                                     className="rounded bg-amber-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
-                                    {overrideSubmitting ? "Submitting…" : "Confirm & proceed"}
+                                    {overrideSubmitting ? "Submitting…" : "Confirm approval"}
                                   </button>
                                   <button
                                     onClick={() => { setOverridingProcId(null); setOverrideNote(""); }}
@@ -803,9 +807,9 @@ export default function PipelineDetailPage() {
                             ) : (
                               <button
                                 onClick={() => { setOverridingProcId(p.proc.procedureId); setOverrideNote(""); }}
-                                className="mt-1 rounded border border-amber-300 px-2 py-0.5 text-[10px] font-medium text-amber-700 hover:bg-amber-100"
+                                className="rounded border border-amber-300 px-2 py-0.5 text-[10px] font-medium text-amber-700 hover:bg-amber-100"
                               >
-                                Proceed without upload
+                                Approve without upload
                               </button>
                             )}
                           </div>

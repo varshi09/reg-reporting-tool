@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUsername } from "@/lib/auth";
-import { overrideBlockedProcedure } from "@/lib/pipelineBuilder";
+import { approveProcedureWithoutUpload } from "@/lib/pipelineBuilder";
 
 export async function POST(
   request: Request,
@@ -27,7 +27,7 @@ export async function POST(
     return NextResponse.json({ error: "A reason is required to proceed without the upload." }, { status: 400 });
   }
 
-  const result = await overrideBlockedProcedure(pipelineId, procedureId, timeKey, note, username);
+  const result = await approveProcedureWithoutUpload(pipelineId, procedureId, timeKey, note, username);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json({ success: true });
 }
