@@ -29,7 +29,7 @@ export async function getAllPipelines(): Promise<Pipeline[]> {
     const result = await connection.execute<PipelineRow>(
       `SELECT p.id, p.name, p.is_active, p.created_by, p.created_at,
               COUNT(DISTINCT pg.id) AS group_count,
-              COUNT(pp.id) AS proc_count
+              COUNT(DISTINCT pp.id) AS proc_count
        FROM PIPELINES p
        LEFT JOIN PIPELINE_GROUPS pg ON pg.pipeline_id = p.id
        LEFT JOIN PIPELINE_PROCEDURES pp ON pp.pipeline_id = p.id AND pp.group_id IS NOT NULL
