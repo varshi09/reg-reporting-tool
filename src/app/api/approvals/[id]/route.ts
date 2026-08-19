@@ -69,7 +69,7 @@ export async function POST(
     }
   }
 
-  const datasetLabel = getUploadTable(row.TARGET_TABLE)?.label ?? row.TARGET_TABLE;
+  const datasetLabel = (await getUploadTable(row.TARGET_TABLE))?.label ?? row.TARGET_TABLE;
 
   if (decision === "reject") {
     await withConnection((connection) =>
@@ -91,7 +91,7 @@ export async function POST(
   }
 
   // decision === "approve"
-  const table = getUploadTable(row.TARGET_TABLE);
+  const table = await getUploadTable(row.TARGET_TABLE);
   if (!table) {
     return NextResponse.json(
       { error: `Unknown dataset "${row.TARGET_TABLE}".` },

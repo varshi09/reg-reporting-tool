@@ -26,7 +26,7 @@ import {
   IconCheck,
 } from "@/components/icons";
 import type { PipelineStructure, CatalogProcedure, ExecMode } from "@/lib/pipelineBuilder";
-import { UPLOAD_TABLES } from "@/lib/uploadTables";
+import type { UploadTableSummary } from "@/lib/uploadTables";
 
 // ─── Palette ─────────────────────────────────────────────────────────────────
 
@@ -64,10 +64,12 @@ type DragPayload =
 
 function DependencyModal({
   initialValue,
+  uploadTables,
   onSave,
   onClose,
 }: {
   initialValue: string | null;
+  uploadTables: UploadTableSummary[];
   onSave: (value: string | null) => void;
   onClose: () => void;
 }) {
@@ -75,7 +77,7 @@ function DependencyModal({
   // A previously-set value that no longer matches any known upload table
   // (e.g. legacy/free-typed data) still needs to show up as an option, so
   // it isn't silently discarded the moment this modal opens.
-  const isStaleValue = initialValue !== null && !UPLOAD_TABLES.some((t) => t.key === initialValue);
+  const isStaleValue = initialValue !== null && !uploadTables.some((t) => t.key === initialValue);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -94,7 +96,7 @@ function DependencyModal({
           {isStaleValue && (
             <option value={initialValue!}>{initialValue} (no longer a known dataset)</option>
           )}
-          {UPLOAD_TABLES.map((t) => (
+          {uploadTables.map((t) => (
             <option key={t.key} value={t.key}>
               {t.label} ({t.key})
             </option>
@@ -149,6 +151,7 @@ export default function PipelineCanvasPage() {
   const [pipelineRenameError, setPipelineRenameError] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  const [uploadTables, setUploadTables] = useState<UploadTableSummary[]>([]);
   const dragPayload = useRef<DragPayload | null>(null);
   const dragScrollDirection = useRef<"up" | "down" | null>(null);
 
@@ -191,14 +194,19 @@ export default function PipelineCanvasPage() {
   }, []);
 
   const load = useCallback(async () => {
-    const [structRes, catRes] = await Promise.all([
+    const [structRes, catRes, tablesRes] = await Promise.all([
       fetch(`/api/pipeline-builder/${pipelineId}`),
       fetch(`/api/procedures`),
+      fetch(`/api/upload-tables`),
     ]);
     if (structRes.ok) setStructure(await structRes.json());
     if (catRes.ok) {
       const data = await catRes.json();
       setCatalog(data.procedures ?? []);
+    }
+    if (tablesRes.ok) {
+      const data = await tablesRes.json();
+      setUploadTables(data.tables ?? []);
     }
     setLoading(false);
   }, [pipelineId]);
@@ -763,7 +771,7 @@ export default function PipelineCanvasPage() {
                             >
                               <IconLink className="h-2.5 w-2.5" />
                               {proc.dependsOnDataset
-                                ? (UPLOAD_TABLES.find((t) => t.key === proc.dependsOnDataset)?.label ?? proc.dependsOnDataset)
+                                ? (uploadTables.find((t) => t.key === proc.dependsOnDataset)?.label ?? proc.dependsOnDataset)
                                 : "No dependency"}
                             </button>
                             <button onClick={() => handleRemoveProcedure(proc.pipelineProcedureId)} className="shrink-0 text-zinc-300 hover:text-red-500">
@@ -830,6 +838,7 @@ export default function PipelineCanvasPage() {
       {depModalPp && (
         <DependencyModal
           initialValue={depModalPp.current}
+          uploadTables={uploadTables}
           onClose={() => setDepModalPp(null)}
           onSave={(v) => handleSaveDependency(depModalPp.ppId, v)}
         />

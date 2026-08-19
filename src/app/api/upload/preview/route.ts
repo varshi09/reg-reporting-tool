@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const table = getUploadTable(targetTable);
+  const table = await getUploadTable(targetTable);
   if (!table) {
     return NextResponse.json(
       { error: "Unknown data type. Choose a data type from the list." },

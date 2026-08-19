@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withConnection } from "@/lib/db";
 import { getCurrentUsername } from "@/lib/auth";
 import { getCheckerDatasets } from "@/lib/roles";
-import { UPLOAD_TABLES } from "@/lib/uploadTables";
+import { getAllUploadTableConfigs } from "@/lib/uploadTables";
 
 type PendingRow = {
   ID: number;
@@ -21,7 +21,8 @@ export async function GET() {
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const allDatasetKeys = UPLOAD_TABLES.map((t) => t.key);
+  const uploadTables = await getAllUploadTableConfigs();
+  const allDatasetKeys = uploadTables.map((t) => t.key);
   const checkerDatasets = await getCheckerDatasets(username, allDatasetKeys);
 
   if (checkerDatasets.length === 0) {
@@ -47,7 +48,7 @@ export async function GET() {
     return result.rows ?? [];
   });
 
-  const labelByKey = new Map(UPLOAD_TABLES.map((t) => [t.key, t.label]));
+  const labelByKey = new Map(uploadTables.map((t) => [t.key, t.label]));
 
   return NextResponse.json({
     entries: rows.map((r) => ({

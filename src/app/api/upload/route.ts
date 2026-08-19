@@ -51,7 +51,7 @@ export async function POST(request: Request) {
 
   // The table name is interpolated into the INSERT below, so it must be the
   // key of a whitelisted config entry — never the raw request value.
-  const table = getUploadTable(targetTable);
+  const table = await getUploadTable(targetTable);
   if (!table) {
     return NextResponse.json(
       { error: "Unknown data type. Choose a data type from the list." },

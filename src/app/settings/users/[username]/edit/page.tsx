@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
-import { UPLOAD_TABLES } from "@/lib/uploadTables";
+import type { UploadTableSummary } from "@/lib/uploadTables";
 
 type RoleValue = "MAKER" | "CHECKER" | "";
 
@@ -34,12 +34,14 @@ export default function EditUserPage() {
   const [rolesSuccess, setRolesSuccess] = useState("");
   const [isSavingRoles, setIsSavingRoles] = useState(false);
   const [isLoadingRoles, setIsLoadingRoles] = useState(true);
+  const [uploadTables, setUploadTables] = useState<UploadTableSummary[]>([]);
 
   const loadDetails = useCallback(async () => {
     setIsLoadingRoles(true);
-    const [usersRes, rolesRes] = await Promise.all([
+    const [usersRes, rolesRes, tablesRes] = await Promise.all([
       fetch("/api/users"),
       fetch(`/api/users/${encodeURIComponent(username)}/roles`),
+      fetch("/api/upload-tables"),
     ]);
     if (usersRes.ok) {
       const data = await usersRes.json();
@@ -56,6 +58,10 @@ export default function EditUserPage() {
       }
       setRoles(map);
     }
+    if (tablesRes.ok) {
+      const data = await tablesRes.json();
+      setUploadTables(data.tables ?? []);
+    }
     setIsLoadingRoles(false);
   }, [username]);
 
@@ -69,7 +75,7 @@ export default function EditUserPage() {
     setIsSavingRoles(true);
     try {
       const payload: Record<string, RoleValue | null> = {};
-      for (const table of UPLOAD_TABLES) {
+      for (const table of uploadTables) {
         payload[table.key] = roles[table.key] || null;
       }
       const response = await fetch(`/api/users/${encodeURIComponent(username)}/roles`, {
@@ -312,7 +318,7 @@ export default function EditUserPage() {
             <p className="mt-4 text-sm text-zinc-500">Loading...</p>
           ) : (
             <div className="mt-4 flex flex-col gap-3">
-              {UPLOAD_TABLES.map((table) => (
+              {uploadTables.map((table) => (
                 <div key={table.key} className="flex items-center justify-between gap-3">
                   <span className="text-sm text-zinc-700">{table.label}</span>
                   <select

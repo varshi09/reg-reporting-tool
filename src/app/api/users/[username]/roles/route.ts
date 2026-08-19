@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { UPLOAD_TABLES } from "@/lib/uploadTables";
+import { getAllUploadTableConfigs } from "@/lib/uploadTables";
 import { getRolesForUser, setDatasetRole, type DatasetRole } from "@/lib/roles";
 
 export async function GET(
@@ -28,7 +28,7 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid roles payload." }, { status: 400 });
   }
 
-  const validKeys = new Set(UPLOAD_TABLES.map((t) => t.key));
+  const validKeys = new Set((await getAllUploadTableConfigs()).map((t) => t.key));
 
   for (const [datasetKey, role] of Object.entries(roles)) {
     if (!validKeys.has(datasetKey)) {

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
-import { IconUser, IconArrowRight } from "@/components/icons";
+import { IconUser, IconCloudUpload, IconArrowRight } from "@/components/icons";
 
 const SETTINGS_SECTIONS = [
   {
@@ -10,6 +10,12 @@ const SETTINGS_SECTIONS = [
     title: "Users",
     description: "See who has access and add new accounts.",
     icon: IconUser,
+  },
+  {
+    href: "/settings/upload-tables",
+    title: "Upload tables",
+    description: "Register which tables datasets can be uploaded into.",
+    icon: IconCloudUpload,
   },
 ] as const;
 

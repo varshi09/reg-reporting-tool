@@ -5,7 +5,7 @@ import type { DragEvent } from "react";
 import AppShell from "@/components/AppShell";
 import { IconFolder } from "@/components/icons";
 import { useRequireAuth } from "@/lib/useRequireAuth";
-import { UPLOAD_TABLES } from "@/lib/uploadTables";
+import type { UploadTableSummary } from "@/lib/uploadTables";
 import { getReportingPeriod } from "@/lib/reportingPeriod";
 import { formatDateTime } from "@/lib/formatDateTime";
 import type { ValidationIssue } from "@/lib/uploadParser";
@@ -75,6 +75,7 @@ export default function UploadPage() {
   const [showResultModal, setShowResultModal] = useState(false);
   const [history, setHistory] = useState<LogEntry[]>([]);
   const [makerDatasets, setMakerDatasets] = useState<string[] | null>(null);
+  const [uploadTables, setUploadTables] = useState<UploadTableSummary[]>([]);
 
   // History is scoped to the data of the current reporting period (the
   // previous month-end), matched on time_key rather than upload timestamp.
@@ -94,6 +95,12 @@ export default function UploadPage() {
   }, [loadHistory]);
 
   useEffect(() => {
+    fetch("/api/upload-tables")
+      .then((r) => (r.ok ? r.json() : { tables: [] }))
+      .then((data) => setUploadTables(data.tables ?? []));
+  }, []);
+
+  useEffect(() => {
     if (!username) return;
     fetch(`/api/users/${encodeURIComponent(username)}/roles`)
       .then((r) => (r.ok ? r.json() : { roles: [] }))
@@ -105,7 +112,7 @@ export default function UploadPage() {
       });
   }, [username]);
 
-  const uploadableTables = UPLOAD_TABLES.filter((t) =>
+  const uploadableTables = uploadTables.filter((t) =>
     (makerDatasets ?? []).includes(t.key)
   );
 
