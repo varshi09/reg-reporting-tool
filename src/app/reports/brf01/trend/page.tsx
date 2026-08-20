@@ -69,6 +69,78 @@ function seriesLabel(sel: Selection): string {
   return `${formatPeriodLabel(sel.timeKey)} (${sel.workingDay})`;
 }
 
+function formatMonthYear(timeKey: string): string {
+  if (timeKey.length !== 8) return timeKey;
+  const year = timeKey.slice(0, 4);
+  const month = Number(timeKey.slice(4, 6));
+  return `${SHORT_MONTH_NAMES[month - 1]} ${year}`;
+}
+
+function daysInMonth(timeKey: string): number {
+  const year = Number(timeKey.slice(0, 4));
+  const month = Number(timeKey.slice(4, 6));
+  return new Date(year, month, 0).getDate();
+}
+
+/** Integer calendar months between two YYYYMMDD keys - day-of-month is ignored since our periods are always month-ends. */
+function monthsBetween(laterKey: string, earlierKey: string): number {
+  const laterTotal = Number(laterKey.slice(0, 4)) * 12 + (Number(laterKey.slice(4, 6)) - 1);
+  const earlierTotal = Number(earlierKey.slice(0, 4)) * 12 + (Number(earlierKey.slice(4, 6)) - 1);
+  return laterTotal - earlierTotal;
+}
+
+/** The month-end date `months` calendar months before `timeKey`, clamped to that target month's length. */
+function shiftMonthsEnd(timeKey: string, months: number): string {
+  const year = Number(timeKey.slice(0, 4));
+  const month = Number(timeKey.slice(4, 6));
+  const day = Number(timeKey.slice(6, 8));
+  const total = year * 12 + (month - 1) - months;
+  const targetYear = Math.floor(total / 12);
+  const targetMonth = ((total % 12) + 12) % 12;
+  const targetDay = Math.min(day, new Date(targetYear, targetMonth + 1, 0).getDate());
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${targetYear}${pad(targetMonth + 1)}${pad(targetDay)}`;
+}
+
+/** Numeric-aware WD compare so "WD10" sorts after "WD2" - mirrors the same rule used server-side. */
+function compareWorkingDay(a: string, b: string): number {
+  const na = /^WD(\d+)$/i.exec(a);
+  const nb = /^WD(\d+)$/i.exec(b);
+  if (na && nb) return Number(na[1]) - Number(nb[1]);
+  return a.localeCompare(b);
+}
+
+/** [later, earlier] by (timeKey, workingDay) - "current" is always the more recent side, regardless of pick order. */
+function orderByRecency(selections: Selection[]): [Selection, Selection] | null {
+  if (selections.length !== 2) return null;
+  const [a, b] = selections;
+  if (a.timeKey !== b.timeKey) return a.timeKey > b.timeKey ? [a, b] : [b, a];
+  return compareWorkingDay(a.workingDay, b.workingDay) >= 0 ? [a, b] : [b, a];
+}
+
+function latestSelection(selections: Selection[]): Selection | null {
+  if (selections.length === 0) return null;
+  return selections.reduce((latest, sel) => {
+    if (sel.timeKey !== latest.timeKey) return sel.timeKey > latest.timeKey ? sel : latest;
+    return compareWorkingDay(sel.workingDay, latest.workingDay) > 0 ? sel : latest;
+  });
+}
+
+type ChangeStats = {
+  current: number | null;
+  previous: number | null;
+  absChange: number | null;
+  pctChange: number | null;
+  trend: "positive" | "negative" | "neutral";
+};
+
+function computeChange(current: number | null, previous: number | null): ChangeStats {
+  const absChange = current !== null && previous !== null ? current - previous : null;
+  const pctChange = absChange !== null && previous ? (absChange / previous) * 100 : null;
+  const trend = absChange === null || absChange === 0 ? "neutral" : absChange > 0 ? "positive" : "negative";
+  return { current, previous, absChange, pctChange, trend };
+}
+
 /** Grand total mini bar chart: one bar per selected series, own scale. */
 function GrandTotalBar({
   title,
@@ -414,6 +486,331 @@ function readInitialTimeKey(): string {
   return new URLSearchParams(window.location.search).get("timeKey") ?? "";
 }
 
+function TrendAnalysisHeader({ context }: { context: Context }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
+      <p className="text-lg font-semibold text-black">Trend Analysis</p>
+      <p className="mt-1 text-sm text-zinc-500">Compare key metrics over time to identify trends and changes.</p>
+      <p className="mt-2 text-xs text-zinc-400">
+        {context.entityGroups.join(", ") || "All entities"} · {context.dataSources.join(", ") || "All sources"}
+      </p>
+    </div>
+  );
+}
+
+type ViewBy = "both" | "amount" | "accounts";
+
+const COMPARISON_MODES: { key: string; label: string; months: number }[] = [
+  { key: "mom", label: "Month-over-Month", months: 1 },
+  { key: "qoq", label: "Quarter-over-Quarter", months: 3 },
+  { key: "yoy", label: "Year-over-Year", months: 12 },
+];
+
+/** Comparison-period label plus quick-picks (MoM/QoQ/YoY) that fill the picker with a matched pair, and the amount/accounts view filter. */
+function ComparisonControls({
+  hierarchy,
+  appliedSelections,
+  onApply,
+  viewBy,
+  onViewByChange,
+}: {
+  hierarchy: Brf01PeriodNode[];
+  appliedSelections: Selection[];
+  onApply: (selections: Selection[]) => void;
+  viewBy: ViewBy;
+  onViewByChange: (v: ViewBy) => void;
+}) {
+  const ordered = orderByRecency(appliedSelections);
+  const referenceNode =
+    (ordered && hierarchy.find((n) => n.timeKey === ordered[0].timeKey)) ?? hierarchy[0] ?? null;
+  const activeMonths = ordered ? monthsBetween(ordered[0].timeKey, ordered[1].timeKey) : null;
+
+  function applyMode(months: number) {
+    if (!referenceNode) return;
+    const targetKey = shiftMonthsEnd(referenceNode.timeKey, months);
+    const targetNode = hierarchy.find((n) => n.timeKey === targetKey);
+    if (!targetNode) return;
+    const referenceWd = referenceNode.workingDays[referenceNode.workingDays.length - 1];
+    const targetWd = targetNode.workingDays[targetNode.workingDays.length - 1];
+    onApply([
+      { timeKey: referenceNode.timeKey, workingDay: referenceWd },
+      { timeKey: targetNode.timeKey, workingDay: targetWd },
+    ]);
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white shadow-sm p-5 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <p className="text-xs font-medium text-zinc-500">Comparison period</p>
+        <p className="mt-0.5 text-base font-semibold text-black">
+          {ordered
+            ? `${formatMonthYear(ordered[0].timeKey)} vs. ${formatMonthYear(ordered[1].timeKey)}`
+            : appliedSelections.length > 0
+              ? `${appliedSelections.length} periods selected`
+              : "No periods selected"}
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex overflow-x-auto rounded-md border border-zinc-300 text-sm" role="group" aria-label="Comparison mode">
+          {COMPARISON_MODES.map((mode) => {
+            const targetKey = referenceNode ? shiftMonthsEnd(referenceNode.timeKey, mode.months) : null;
+            const targetNode = targetKey ? hierarchy.find((n) => n.timeKey === targetKey) : null;
+            const disabled = !targetNode;
+            const active = activeMonths === mode.months;
+            return (
+              <button
+                key={mode.key}
+                type="button"
+                disabled={disabled}
+                onClick={() => applyMode(mode.months)}
+                title={disabled && targetKey ? `No data for ${formatMonthYear(targetKey)}` : undefined}
+                aria-pressed={active}
+                className={`whitespace-nowrap px-3 py-1.5 font-medium transition-colors first:rounded-l-md last:rounded-r-md ${
+                  active
+                    ? "bg-indigo-600 text-white"
+                    : disabled
+                      ? "cursor-not-allowed bg-zinc-50 text-zinc-300"
+                      : "bg-white text-zinc-700 hover:bg-zinc-50"
+                }`}
+              >
+                {mode.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex overflow-x-auto rounded-md border border-zinc-300 text-sm" role="group" aria-label="View by">
+          {(["both", "amount", "accounts"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => onViewByChange(v)}
+              aria-pressed={viewBy === v}
+              className={`whitespace-nowrap px-3 py-1.5 font-medium transition-colors first:rounded-l-md last:rounded-r-md ${
+                viewBy === v ? "bg-indigo-50 text-indigo-700" : "bg-white text-zinc-700 hover:bg-zinc-50"
+              }`}
+            >
+              {v === "both" ? "Both metrics" : v === "amount" ? "Amount" : "Accounts"}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const TREND_STYLES: Record<ChangeStats["trend"], { badge: string; text: string; arrow: string }> = {
+  positive: { badge: "bg-emerald-50 text-emerald-700", text: "text-emerald-600", arrow: "↑" },
+  negative: { badge: "bg-red-50 text-red-700", text: "text-red-600", arrow: "↓" },
+  neutral: { badge: "bg-zinc-100 text-zinc-600", text: "text-zinc-500", arrow: "→" },
+};
+
+function trendLabel(trend: ChangeStats["trend"]): string {
+  if (trend === "positive") return "Positive Trend";
+  if (trend === "negative") return "Negative Trend";
+  return "Flat";
+}
+
+/** One metric's current-vs-previous summary: big value, delta badge, and the absolute/percentage/monthly-avg row. */
+function MetricTrendCard({
+  title,
+  stats,
+  formatValue,
+  monthlyAvg,
+  monthlyAvgLabel,
+}: {
+  title: string;
+  stats: ChangeStats;
+  formatValue: (v: number) => string;
+  monthlyAvg: number | null;
+  monthlyAvgLabel: string;
+}) {
+  const style = TREND_STYLES[stats.trend];
+  return (
+    <div className="min-w-[260px] flex-1 rounded-lg border border-zinc-200 bg-white p-5">
+      <p className="text-sm font-semibold text-zinc-900">{title}</p>
+      <p className="mt-2 text-3xl font-bold tracking-tight text-zinc-900">
+        {stats.current !== null ? formatValue(stats.current) : "N/A"}
+      </p>
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-zinc-500">
+        <span>vs. {stats.previous !== null ? formatValue(stats.previous) : "N/A"}</span>
+        {stats.pctChange !== null && (
+          <span className={`inline-flex items-center gap-0.5 font-medium ${style.text}`}>
+            <span aria-hidden="true">{style.arrow}</span>
+            {fmtPct(stats.pctChange)}
+          </span>
+        )}
+      </div>
+      <span className={`mt-2 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${style.badge}`}>
+        {stats.absChange === null ? "No prior data" : trendLabel(stats.trend)}
+      </span>
+
+      <div className="mt-4 grid grid-cols-3 gap-3 border-t border-zinc-100 pt-3 text-sm">
+        <div>
+          <p className="text-xs text-zinc-500">Absolute Change</p>
+          <p className={`mt-0.5 font-semibold ${style.text}`}>
+            {stats.absChange !== null ? `${stats.absChange > 0 ? "+" : ""}${formatValue(stats.absChange)}` : "N/A"}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-zinc-500">Percentage Change</p>
+          <p className={`mt-0.5 font-semibold ${style.text}`}>{fmtPct(stats.pctChange)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-zinc-500">{monthlyAvgLabel}</p>
+          <p className="mt-0.5 font-semibold text-zinc-900">{monthlyAvg !== null ? formatValue(monthlyAvg) : "N/A"}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type TwoWayStats = {
+  laterSel: Selection;
+  earlierSel: Selection;
+  amount: ChangeStats;
+  accounts: ChangeStats;
+};
+
+/** Current-vs-previous totals for exactly two selections - "current" is always the more recent one, regardless of pick order. */
+function computeTwoWayStats(entries: Brf01TrendEntry[], selections: Selection[]): TwoWayStats | null {
+  const ordered = orderByRecency(selections);
+  if (!ordered) return null;
+  const [laterSel, earlierSel] = ordered;
+  const laterIdx = selections.findIndex((s) => keyOf(s) === keyOf(laterSel));
+  const earlierIdx = selections.findIndex((s) => keyOf(s) === keyOf(earlierSel));
+  const leaf = entries.filter((e) => !e.isHeader);
+  const sumAt = (idx: number, pick: (s: Brf01TrendEntry["series"][number]) => number | null) =>
+    leaf.reduce((total, e) => {
+      const v = pick(e.series[idx]);
+      return v === null ? total : total + v;
+    }, 0);
+  return {
+    laterSel,
+    earlierSel,
+    amount: computeChange(sumAt(laterIdx, (s) => s.amount), sumAt(earlierIdx, (s) => s.amount)),
+    accounts: computeChange(sumAt(laterIdx, (s) => s.accounts), sumAt(earlierIdx, (s) => s.accounts)),
+  };
+}
+
+function GrandTotalsSection({ stats, viewBy }: { stats: TwoWayStats; viewBy: ViewBy }) {
+  const monthlyAvgLabel = `Monthly Avg (${formatMonthYear(stats.laterSel.timeKey).split(" ")[0]})`;
+  const days = daysInMonth(stats.laterSel.timeKey);
+  const amountAvg = stats.amount.current !== null ? stats.amount.current / days : null;
+  const accountAvg = stats.accounts.current !== null ? stats.accounts.current / days : null;
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-4">
+      {viewBy !== "accounts" && (
+        <MetricTrendCard
+          title="Total Amount (AED)"
+          stats={stats.amount}
+          formatValue={(v) => `${fmt(v)} AED`}
+          monthlyAvg={amountAvg}
+          monthlyAvgLabel={monthlyAvgLabel}
+        />
+      )}
+      {viewBy !== "amount" && (
+        <MetricTrendCard
+          title="Total Accounts"
+          stats={stats.accounts}
+          formatValue={(v) => `${v.toLocaleString()} a/cs`}
+          monthlyAvg={accountAvg}
+          monthlyAvgLabel={monthlyAvgLabel}
+        />
+      )}
+    </div>
+  );
+}
+
+function InsightCard({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="rounded-md border border-zinc-100 bg-zinc-50 p-3">
+      <p className="text-xs text-zinc-500">{label}</p>
+      <p className="mt-1 text-sm font-medium text-zinc-900">{value}</p>
+      <p className="text-sm font-semibold text-zinc-700">{detail}</p>
+    </div>
+  );
+}
+
+function describeMetric(label: string, stats: ChangeStats, formatAbs: (v: number) => string): string {
+  if (stats.pctChange === null || stats.absChange === null) {
+    return `${label} could not be compared with the previous period`;
+  }
+  const verb = stats.trend === "positive" ? "increased" : stats.trend === "negative" ? "decreased" : "stayed flat";
+  const sign = stats.absChange > 0 ? "+" : "";
+  return `${label} ${verb} by ${fmtPct(stats.pctChange)} (${sign}${formatAbs(stats.absChange)}) compared with the previous period`;
+}
+
+/** Management-friendly summary generated from the actual current/previous totals - never a canned sentence. */
+function TrendInsightPanel({ stats }: { stats: TwoWayStats }) {
+  const amountSentence = describeMetric("Total Amount (AED)", stats.amount, (v) => `${fmt(v)} AED`);
+  const accountSentence = describeMetric("Total Accounts", stats.accounts, (v) => `${v.toLocaleString()} a/cs`);
+
+  let closing = "";
+  if (stats.amount.trend !== "neutral" || stats.amount.absChange !== null) {
+    if (stats.amount.absChange !== null && stats.accounts.absChange !== null) {
+      if (stats.amount.trend === "positive" && stats.accounts.trend === "positive") closing = "Both metrics show positive growth.";
+      else if (stats.amount.trend === "negative" && stats.accounts.trend === "negative") closing = "Both metrics declined.";
+      else closing = "Metrics show mixed movement.";
+    }
+  }
+
+  const metrics = [
+    { label: "Total Amount (AED)", stats: stats.amount, formatValue: (v: number) => `${fmt(v)} AED` },
+    { label: "Total Accounts", stats: stats.accounts, formatValue: (v: number) => `${v.toLocaleString()} a/cs` },
+  ];
+  const growthCandidates = metrics.filter((m) => m.stats.pctChange !== null);
+  const strongest = growthCandidates.length
+    ? growthCandidates.reduce((best, m) => (Math.abs(m.stats.pctChange!) > Math.abs(best.stats.pctChange!) ? m : best))
+    : null;
+  const absCandidates = metrics.filter((m) => m.stats.absChange !== null);
+  const highestAbs = absCandidates.length
+    ? absCandidates.reduce((best, m) => (Math.abs(m.stats.absChange!) > Math.abs(best.stats.absChange!) ? m : best))
+    : null;
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
+      <p className="text-sm font-semibold text-black">Insights</p>
+      <p className="mt-2 text-sm leading-relaxed text-zinc-700">
+        {amountSentence}, while {accountSentence.charAt(0).toLowerCase()}
+        {accountSentence.slice(1)}.{closing ? ` ${closing}` : ""}
+      </p>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {strongest && (
+          <InsightCard
+            label={strongest.stats.trend === "negative" ? "Largest Decline" : "Strongest Growth"}
+            value={strongest.label}
+            detail={fmtPct(strongest.stats.pctChange)}
+          />
+        )}
+        {highestAbs && (
+          <InsightCard
+            label="Highest Absolute Change"
+            value={highestAbs.label}
+            detail={`${highestAbs.stats.absChange! > 0 ? "+" : ""}${highestAbs.formatValue(highestAbs.stats.absChange!)}`}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DataFreshnessIndicator({ selections }: { selections: Selection[] }) {
+  const latest = latestSelection(selections);
+  if (!latest) return null;
+  return (
+    <p className="text-xs text-zinc-400">
+      Data as of{" "}
+      <span className="font-medium text-zinc-500">
+        {formatPeriodLabel(latest.timeKey)} · {latest.workingDay}
+      </span>
+    </p>
+  );
+}
+
 type TrendResult = { selections: Selection[]; entries: Brf01TrendEntry[] };
 
 export default function Brf01TrendPage() {
@@ -424,6 +821,7 @@ export default function Brf01TrendPage() {
   // entries from one selection set paired with a longer/shorter selections array.
   const [result, setResult] = useState<TrendResult | null>(null);
   const [showTable, setShowTable] = useState(false);
+  const [viewBy, setViewBy] = useState<ViewBy>("both");
 
   useEffect(() => {
     fetch("/api/brf01/period-hierarchy")
@@ -459,7 +857,8 @@ export default function Brf01TrendPage() {
       .then((data) => setResult({ selections: appliedSelections, entries: data.entries ?? [] }));
   }, [appliedSelections, context]);
 
-  const canShowTable = result !== null && result.selections.length === 2;
+  const twoWayStats = result !== null ? computeTwoWayStats(result.entries, result.selections) : null;
+  const canShowTable = twoWayStats !== null;
 
   return (
     <AppShell active="/reports" title="BRF 01 - Trend Analysis">
@@ -468,13 +867,23 @@ export default function Brf01TrendPage() {
           ← Back to BRF 01 summary
         </a>
 
-        <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
-          <p className="text-sm font-semibold text-black">CBUAE Banking Return Form 01 — Trend Analysis</p>
-          <p className="mt-1 text-sm text-zinc-500">
-            {context.entityGroups.join(", ") || "All entities"} · {context.dataSources.join(", ") || "All sources"}
-          </p>
+        <TrendAnalysisHeader context={context} />
 
-          <div className="mt-4">
+        {hierarchy && (
+          <ComparisonControls
+            hierarchy={hierarchy}
+            appliedSelections={appliedSelections}
+            onApply={setAppliedSelections}
+            viewBy={viewBy}
+            onViewByChange={setViewBy}
+          />
+        )}
+
+        <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
+          <p className="text-sm font-medium text-zinc-700">Custom comparison</p>
+          <p className="mt-0.5 text-xs text-zinc-400">Choose specific periods and working days, including more than two at once.</p>
+
+          <div className="mt-3">
             {hierarchy && (
               <PeriodPicker hierarchy={hierarchy} applied={appliedSelections} onApply={setAppliedSelections} />
             )}
@@ -495,19 +904,31 @@ export default function Brf01TrendPage() {
 
           return (
             <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
-              <p className="text-sm font-semibold text-black">Grand totals</p>
-              <div className="mt-3 flex flex-wrap gap-4">
-                <GrandTotalBar
-                  title="Total Amount (AED)"
-                  bars={selections.map((sel, i) => ({ label: seriesLabel(sel), value: amountSums[i], color: colorForIndex(i) }))}
-                  formatValue={(v) => `${fmt(v)} AED`}
-                />
-                <GrandTotalBar
-                  title="Total Accounts"
-                  bars={selections.map((sel, i) => ({ label: seriesLabel(sel), value: accountSums[i], color: colorForIndex(i) }))}
-                  formatValue={(v) => `${v.toLocaleString()} a/cs`}
-                />
+              <div className="flex flex-wrap items-baseline justify-between gap-1">
+                <p className="text-sm font-semibold text-black">Grand totals</p>
+                {twoWayStats && (
+                  <p className="text-xs text-zinc-400">
+                    vs. Previous Period ({formatPeriodLabel(twoWayStats.earlierSel.timeKey)})
+                  </p>
+                )}
               </div>
+
+              {twoWayStats ? (
+                <GrandTotalsSection stats={twoWayStats} viewBy={viewBy} />
+              ) : (
+                <div className="mt-3 flex flex-wrap gap-4">
+                  <GrandTotalBar
+                    title="Total Amount (AED)"
+                    bars={selections.map((sel, i) => ({ label: seriesLabel(sel), value: amountSums[i], color: colorForIndex(i) }))}
+                    formatValue={(v) => `${fmt(v)} AED`}
+                  />
+                  <GrandTotalBar
+                    title="Total Accounts"
+                    bars={selections.map((sel, i) => ({ label: seriesLabel(sel), value: accountSums[i], color: colorForIndex(i) }))}
+                    formatValue={(v) => `${v.toLocaleString()} a/cs`}
+                  />
+                </div>
+              )}
 
               <p className="mt-6 text-sm font-semibold text-black">By line — Total Amount</p>
               <div className="mt-3">
@@ -532,14 +953,19 @@ export default function Brf01TrendPage() {
           );
         })()}
 
-        {canShowTable && showTable && result !== null && (() => {
+        {twoWayStats && <TrendInsightPanel stats={twoWayStats} />}
+
+        {canShowTable && showTable && result !== null && twoWayStats && (() => {
           const { selections, entries } = result;
-          const [curSel, prevSel] = selections;
+          const curSel = twoWayStats.laterSel;
+          const prevSel = twoWayStats.earlierSel;
+          const curIdx = selections.findIndex((s) => keyOf(s) === keyOf(curSel));
+          const prevIdx = selections.findIndex((s) => keyOf(s) === keyOf(prevSel));
           const rows = entries.map((entry) => {
-            const currentAmount = entry.series[0]?.amount ?? null;
-            const previousAmount = entry.series[1]?.amount ?? null;
-            const currentAccounts = entry.series[0]?.accounts ?? null;
-            const previousAccounts = entry.series[1]?.accounts ?? null;
+            const currentAmount = entry.series[curIdx]?.amount ?? null;
+            const previousAmount = entry.series[prevIdx]?.amount ?? null;
+            const currentAccounts = entry.series[curIdx]?.accounts ?? null;
+            const previousAccounts = entry.series[prevIdx]?.accounts ?? null;
             const varianceAmount = currentAmount !== null && previousAmount !== null ? currentAmount - previousAmount : null;
             const varianceAccounts = currentAccounts !== null && previousAccounts !== null ? currentAccounts - previousAccounts : null;
             const variancePct = varianceAmount !== null && previousAmount ? (varianceAmount / previousAmount) * 100 : null;
@@ -603,6 +1029,13 @@ export default function Brf01TrendPage() {
             </div>
           );
         })()}
+
+        {result !== null && (
+          <div className="flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
+            <DataFreshnessIndicator selections={result.selections} />
+            <p className="text-xs text-zinc-400">All amounts are in AED. Figures may be rounded.</p>
+          </div>
+        )}
       </div>
     </AppShell>
   );
