@@ -525,15 +525,23 @@ export async function getPipelineRunState(
     ),
   ];
 
+  const workingDayStartedAt = await getWorkingDayStartedAt(pipelineId, timeKey, resolvedWorkingDay);
+
   const approvedSet =
     datasets.length > 0
       ? await withConnection(async (conn) => {
           const placeholders = datasets.map((_, i) => `:d${i}`).join(",");
           const binds: Record<string, unknown> = { timeKey };
           datasets.forEach((d, i) => { binds[`d${i}`] = d; });
+          // An upload approved before this working day began doesn't count -
+          // WD2+ needs its own fresh approval, not WD1's hand-me-down. WD1
+          // itself (workingDayStartedAt null) keeps today's unrestricted
+          // behavior: any approval for the period satisfies it.
+          const cutoffClause = workingDayStartedAt ? "AND reviewed_at >= :workingDayStartedAt" : "";
+          if (workingDayStartedAt) binds.workingDayStartedAt = workingDayStartedAt;
           const r = await conn.execute<{ TARGET_TABLE: string }>(
             `SELECT DISTINCT target_table FROM UPLOAD_LOG
-             WHERE target_table IN (${placeholders}) AND time_key = :timeKey AND status = 'APPROVED'`,
+             WHERE target_table IN (${placeholders}) AND time_key = :timeKey AND status = 'APPROVED' ${cutoffClause}`,
             binds
           );
           return new Set((r.rows ?? []).map((row) => row.TARGET_TABLE));
@@ -549,7 +557,9 @@ export async function getPipelineRunState(
       if (proc.dependsOnDataset && !run?.OVERRIDE_TYPE) {
         if (!approvedSet.has(proc.dependsOnDataset)) {
           isBlocked = true;
-          blockedReason = `Waiting on an approved upload for ${proc.dependsOnDataset}`;
+          blockedReason = workingDayStartedAt
+            ? `Waiting on an approved upload for ${proc.dependsOnDataset} since ${resolvedWorkingDay} started - a previous working day's approval doesn't count for this one`
+            : `Waiting on an approved upload for ${proc.dependsOnDataset}`;
         }
       }
 
@@ -642,6 +652,29 @@ export async function getCurrentWorkingDay(pipelineId: number, timeKey: string):
     return r.rows ?? [];
   });
   return rows[0]?.WORKING_DAY ?? "WD1";
+}
+
+/**
+ * When a specific working day was explicitly started - null for the
+ * implicit WD1, which has no PIPELINE_VERSIONS row. Used to cut off stale
+ * dataset approvals: an upload approved before this working day began
+ * shouldn't silently satisfy it (see getPipelineRunState's isBlocked check)
+ * - moving to a new working day means the dependency needs a fresh
+ * approval, not a hand-me-down from an earlier one.
+ */
+async function getWorkingDayStartedAt(
+  pipelineId: number,
+  timeKey: string,
+  workingDay: string
+): Promise<Date | null> {
+  const rows: { CREATED_AT: Date }[] = await withConnection(async (conn) => {
+    const r = await conn.execute<{ CREATED_AT: Date }>(
+      `SELECT created_at FROM PIPELINE_VERSIONS WHERE pipeline_id = :pipelineId AND time_key = :timeKey AND working_day = :workingDay`,
+      { pipelineId, timeKey, workingDay }
+    );
+    return r.rows ?? [];
+  });
+  return rows[0]?.CREATED_AT ?? null;
 }
 
 export async function listWorkingDays(pipelineId: number, timeKey: string): Promise<WorkingDayInfo> {
