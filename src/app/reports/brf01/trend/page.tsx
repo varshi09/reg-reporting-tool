@@ -414,11 +414,15 @@ function readInitialTimeKey(): string {
   return new URLSearchParams(window.location.search).get("timeKey") ?? "";
 }
 
+type TrendResult = { selections: Selection[]; entries: Brf01TrendEntry[] };
+
 export default function Brf01TrendPage() {
   const [context] = useState<Context>(readContext);
   const [hierarchy, setHierarchy] = useState<Brf01PeriodNode[] | null>(null);
   const [appliedSelections, setAppliedSelections] = useState<Selection[]>([]);
-  const [entries, setEntries] = useState<Brf01TrendEntry[] | null>(null);
+  // Bundled with the selections that produced it, so a render can never see
+  // entries from one selection set paired with a longer/shorter selections array.
+  const [result, setResult] = useState<TrendResult | null>(null);
   const [showTable, setShowTable] = useState(false);
 
   useEffect(() => {
@@ -441,7 +445,7 @@ export default function Brf01TrendPage() {
 
   useEffect(() => {
     if (appliedSelections.length === 0) {
-      setEntries(null);
+      setResult(null);
       return;
     }
     const params = new URLSearchParams();
@@ -449,13 +453,13 @@ export default function Brf01TrendPage() {
     context.dataSources.forEach((ds) => params.append("dataSource", ds));
     appliedSelections.forEach((sel) => params.append("selection", `${sel.timeKey}:${sel.workingDay}`));
 
-    setEntries(null);
+    setResult(null);
     fetch(`/api/brf01/trend?${params.toString()}`)
       .then((r) => r.json())
-      .then((data) => setEntries(data.entries ?? []));
+      .then((data) => setResult({ selections: appliedSelections, entries: data.entries ?? [] }));
   }, [appliedSelections, context]);
 
-  const canShowTable = appliedSelections.length === 2;
+  const canShowTable = result !== null && result.selections.length === 2;
 
   return (
     <AppShell active="/reports" title="BRF 01 - Trend Analysis">
@@ -480,10 +484,11 @@ export default function Brf01TrendPage() {
           )}
         </div>
 
-        {entries !== null && appliedSelections.length > 0 && (() => {
+        {result !== null && (() => {
+          const { selections, entries } = result;
           const leaf = entries.filter((e) => !e.isHeader);
           const sumSeries = (pick: (s: (typeof leaf)[number]["series"][number]) => number | null) =>
-            appliedSelections.map((_, i) => leaf.reduce((total, e) => total + (pick(e.series[i]) ?? 0), 0));
+            selections.map((_, i) => leaf.reduce((total, e) => total + (pick(e.series[i]) ?? 0), 0));
 
           const amountSums = sumSeries((s) => s.amount);
           const accountSums = sumSeries((s) => s.accounts);
@@ -494,19 +499,19 @@ export default function Brf01TrendPage() {
               <div className="mt-3 flex flex-wrap gap-4">
                 <GrandTotalBar
                   title="Total Amount (AED)"
-                  bars={appliedSelections.map((sel, i) => ({ label: seriesLabel(sel), value: amountSums[i], color: colorForIndex(i) }))}
+                  bars={selections.map((sel, i) => ({ label: seriesLabel(sel), value: amountSums[i], color: colorForIndex(i) }))}
                   formatValue={(v) => `${fmt(v)} AED`}
                 />
                 <GrandTotalBar
                   title="Total Accounts"
-                  bars={appliedSelections.map((sel, i) => ({ label: seriesLabel(sel), value: accountSums[i], color: colorForIndex(i) }))}
+                  bars={selections.map((sel, i) => ({ label: seriesLabel(sel), value: accountSums[i], color: colorForIndex(i) }))}
                   formatValue={(v) => `${v.toLocaleString()} a/cs`}
                 />
               </div>
 
               <p className="mt-6 text-sm font-semibold text-black">By line — Total Amount</p>
               <div className="mt-3">
-                <ByLineChart entries={entries} selections={appliedSelections} />
+                <ByLineChart entries={entries} selections={selections} />
               </div>
 
               {canShowTable ? (
@@ -518,17 +523,18 @@ export default function Brf01TrendPage() {
                     {showTable ? "Hide" : "Show"} detailed comparison table
                   </button>
                 </div>
-              ) : appliedSelections.length > 2 ? (
+              ) : selections.length > 2 ? (
                 <p className="mt-5 border-t border-zinc-100 pt-4 text-xs text-zinc-400">
-                  The detailed comparison table (with variance) is only available when exactly 2 periods are selected — {appliedSelections.length} are selected now.
+                  The detailed comparison table (with variance) is only available when exactly 2 periods are selected — {selections.length} are selected now.
                 </p>
               ) : null}
             </div>
           );
         })()}
 
-        {canShowTable && showTable && entries !== null && (() => {
-          const [curSel, prevSel] = appliedSelections;
+        {canShowTable && showTable && result !== null && (() => {
+          const { selections, entries } = result;
+          const [curSel, prevSel] = selections;
           const rows = entries.map((entry) => {
             const currentAmount = entry.series[0]?.amount ?? null;
             const previousAmount = entry.series[1]?.amount ?? null;
