@@ -23,6 +23,7 @@ function fmt(value: number | null) {
 
 function buildDrillUrl(
   filters: AppliedFilters,
+  workingDay: string,
   lineNo: string,
   resident: "RES" | "NONRES",
   currency: "AED" | "FCY"
@@ -31,6 +32,7 @@ function buildDrillUrl(
   filters.entityGroups.forEach((eg) => params.append("entityGroup", eg));
   filters.dataSources.forEach((ds) => params.append("dataSource", ds));
   if (filters.timeKey) params.set("timeKey", filters.timeKey.replace(/-/g, ""));
+  if (workingDay) params.set("workingDay", workingDay);
   params.set("lineNo", lineNo);
   params.set("resident", resident);
   params.set("currency", currency);
@@ -87,6 +89,8 @@ export default function Brf01ReportPage() {
 
   const [entries, setEntries] = useState<Brf01Entry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [workingDayInfo, setWorkingDayInfo] = useState<{ current: string; history: string[] } | null>(null);
+  const [selectedWorkingDay, setSelectedWorkingDay] = useState("");
 
   useEffect(() => {
     const defaultTimeKey = toDateInputValue(getReportingPeriod().timeKey);
@@ -107,14 +111,18 @@ export default function Brf01ReportPage() {
     if (appliedFilters.timeKey) {
       params.set("timeKey", appliedFilters.timeKey.replace(/-/g, ""));
     }
+    if (selectedWorkingDay) params.set("workingDay", selectedWorkingDay);
 
     const response = await fetch(`/api/brf01?${params.toString()}`);
     if (response.ok) {
       const data = await response.json();
       setEntries(data.entries ?? []);
+      const history: string[] = data.workingDayHistory ?? ["WD1"];
+      setWorkingDayInfo({ current: data.workingDay ?? "WD1", history });
+      setSelectedWorkingDay((cur) => (cur && history.includes(cur) ? cur : (data.workingDay ?? "WD1")));
     }
     setIsLoading(false);
-  }, [appliedFilters]);
+  }, [appliedFilters, selectedWorkingDay]);
 
   useEffect(() => {
     loadEntries();
@@ -136,6 +144,7 @@ export default function Brf01ReportPage() {
     if (appliedFilters.timeKey) {
       params.set("timeKey", appliedFilters.timeKey.replace(/-/g, ""));
     }
+    if (selectedWorkingDay) params.set("workingDay", selectedWorkingDay);
     window.location.href = `/api/brf01/export?${params.toString()}`;
   }
 
@@ -201,6 +210,26 @@ export default function Brf01ReportPage() {
               onChange={setDraftDataSources}
             />
 
+            {workingDayInfo && (
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="workingDayFilter" className="text-sm font-medium text-black">
+                  Working day
+                </label>
+                <select
+                  id="workingDayFilter"
+                  value={selectedWorkingDay}
+                  onChange={(e) => setSelectedWorkingDay(e.target.value)}
+                  className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-black outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
+                >
+                  {workingDayInfo.history.map((wd) => (
+                    <option key={wd} value={wd}>
+                      {wd}{wd === workingDayInfo.current && wd !== "WD1" ? " (current)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <button
               onClick={handleApply}
               disabled={draftEntityGroups.length === 0 || draftDataSources.length === 0}
@@ -256,7 +285,7 @@ export default function Brf01ReportPage() {
                   {entries.map((entry) => {
                     const m = entry.metrics;
                     const url = (resident: "RES" | "NONRES", currency: "AED" | "FCY") =>
-                      appliedFilters ? buildDrillUrl(appliedFilters, entry.code, resident, currency) : "#";
+                      appliedFilters ? buildDrillUrl(appliedFilters, selectedWorkingDay, entry.code, resident, currency) : "#";
                     return (
                       <tr
                         key={entry.code}

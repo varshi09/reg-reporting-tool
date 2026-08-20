@@ -19,8 +19,9 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const timeKey = searchParams.get("timeKey") ?? "";
   if (!timeKey) return NextResponse.json({ error: "timeKey is required." }, { status: 400 });
+  const workingDay = searchParams.get("workingDay") ?? undefined;
 
-  const state = await getPipelineRunState(pipelineId, timeKey);
+  const state = await getPipelineRunState(pipelineId, timeKey, workingDay);
   if (!state) return NextResponse.json({ error: "Pipeline not found." }, { status: 404 });
 
   const historyStats = (await getPipelineHistoryStats([pipelineId])).get(pipelineId) ?? {

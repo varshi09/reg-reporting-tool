@@ -7,6 +7,7 @@ import {
   applySubtotalRowStyle,
   applyDataRowBorder,
 } from "@/lib/excelReportTemplate";
+import { getBrf01WorkingDays } from "@/lib/brf01Trend";
 
 type SummaryRow = {
   LINE_NO: string;
@@ -43,8 +44,11 @@ export async function GET(request: Request) {
   const entityGroups = params.getAll("entityGroup");
   const dataSources = params.getAll("dataSource");
 
-  const conditions: string[] = [];
-  const binds: Record<string, string> = {};
+  const workingDayInfo = timeKey ? await getBrf01WorkingDays(timeKey) : null;
+  const workingDay = params.get("workingDay") || workingDayInfo?.current || "WD1";
+
+  const conditions: string[] = ["working_day = :workingDay"];
+  const binds: Record<string, string> = { workingDay };
 
   if (timeKey) {
     conditions.push("time_key = :timeKey");
@@ -98,6 +102,9 @@ export async function GET(request: Request) {
     entityGroups,
     dataSources,
   });
+  sheet.getCell(1, 10).value = "Working day:";
+  sheet.getCell(1, 10).font = { bold: true };
+  sheet.getCell(1, 11).value = workingDay;
 
   const { metricKeys } = writeBrfMetricHeader(sheet, headerStartRow, [
     { header: "Line No", width: 10 },
@@ -132,7 +139,7 @@ export async function GET(request: Request) {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="BRF01_Assets_${
         timeKey ?? "all"
-      }.xlsx"`,
+      }_${workingDay}.xlsx"`,
     },
   });
 }

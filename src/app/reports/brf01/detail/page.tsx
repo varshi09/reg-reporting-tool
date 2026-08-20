@@ -11,6 +11,7 @@ function fmt(value: number | null | undefined) {
 
 type DetailQuery = {
   timeKey: string;
+  workingDay: string;
   entityGroups: string[];
   dataSources: string[];
   lineNo: string;
@@ -29,6 +30,7 @@ function readQuery(): DetailQuery | null {
   }
   return {
     timeKey: params.get("timeKey") ?? "",
+    workingDay: params.get("workingDay") ?? "",
     entityGroups: params.getAll("entityGroup"),
     dataSources: params.getAll("dataSource"),
     lineNo,
@@ -42,6 +44,7 @@ function buildParams(query: DetailQuery): URLSearchParams {
   query.entityGroups.forEach((eg) => params.append("entityGroup", eg));
   query.dataSources.forEach((ds) => params.append("dataSource", ds));
   if (query.timeKey) params.set("timeKey", query.timeKey);
+  if (query.workingDay) params.set("workingDay", query.workingDay);
   params.set("lineNo", query.lineNo);
   params.set("resident", query.resident);
   params.set("currency", query.currency);
@@ -50,6 +53,7 @@ function buildParams(query: DetailQuery): URLSearchParams {
 
 const COLUMNS: { key: keyof Brf01DetailRow; header: string; align?: "right" }[] = [
   { key: "timeKey", header: "Time Key" },
+  { key: "workingDay", header: "Working Day" },
   { key: "entityGroup", header: "Entity Group" },
   { key: "dataSource", header: "Data Source" },
   { key: "lineNo", header: "Line No" },
@@ -112,6 +116,7 @@ export default function Brf01DetailPage() {
                 {residentLabel} · {query.currency} · {query.entityGroups.join(", ") || "All entities"} ·{" "}
                 {query.dataSources.join(", ") || "All sources"}
                 {query.timeKey ? ` · ${query.timeKey}` : ""}
+                {rows?.[0]?.workingDay ? ` · ${rows[0].workingDay}` : ""}
               </p>
               {rows && (
                 <p className="mt-1 text-sm text-zinc-500">

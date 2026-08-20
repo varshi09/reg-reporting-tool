@@ -2,6 +2,7 @@ import { withConnection } from "@/lib/db";
 
 export type Brf01DetailRow = {
   timeKey: string;
+  workingDay: string;
   entityGroup: string;
   dataSource: string;
   lineNo: string;
@@ -25,6 +26,7 @@ export type Brf01DetailRow = {
 
 type Row = {
   TIME_KEY: string;
+  WORKING_DAY: string;
   ENTITY_GROUP: string;
   DATA_SOURCE: string;
   LINE_NO: string;
@@ -63,6 +65,7 @@ function buildInClause(
 
 export type Brf01DetailParams = {
   timeKey: string;
+  workingDay: string;
   entityGroups: string[];
   dataSources: string[];
   lineNo: string;
@@ -71,8 +74,8 @@ export type Brf01DetailParams = {
 };
 
 function buildDetailQuery(params: Brf01DetailParams): { sql: string; binds: Record<string, string> } {
-  const conditions: string[] = ["line_no = :lineNo", "resident_flag = :resident"];
-  const binds: Record<string, string> = { lineNo: params.lineNo, resident: params.resident };
+  const conditions: string[] = ["line_no = :lineNo", "resident_flag = :resident", "working_day = :workingDay"];
+  const binds: Record<string, string> = { lineNo: params.lineNo, resident: params.resident, workingDay: params.workingDay };
 
   if (params.timeKey) {
     conditions.push("time_key = :timeKey");
@@ -86,7 +89,7 @@ function buildDetailQuery(params: Brf01DetailParams): { sql: string; binds: Reco
 
   conditions.push(params.currency === "AED" ? "currency_code = 'AED'" : "currency_code != 'AED'");
 
-  const sql = `SELECT time_key, entity_group, data_source, line_no, line_desc, resident_flag, currency_code,
+  const sql = `SELECT time_key, working_day, entity_group, data_source, line_no, line_desc, resident_flag, currency_code,
                       customer_number, contract_number, customer_name, no_of_accounts, closing_balance_aed,
                       nationality, nationality_desc, emirates, country_code, country_name,
                       gl_account_id, target, sector
@@ -99,6 +102,7 @@ function buildDetailQuery(params: Brf01DetailParams): { sql: string; binds: Reco
 function mapRow(r: Row): Brf01DetailRow {
   return {
     timeKey: r.TIME_KEY,
+    workingDay: r.WORKING_DAY,
     entityGroup: r.ENTITY_GROUP,
     dataSource: r.DATA_SOURCE,
     lineNo: r.LINE_NO,

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withConnection } from "@/lib/db";
 import { BRF01_TEMPLATE, EMPTY_METRICS, type Brf01Metrics } from "@/lib/brf01Template";
+import { getBrf01WorkingDays } from "@/lib/brf01Trend";
 
 type SummaryRow = {
   LINE_NO: string;
@@ -37,8 +38,11 @@ export async function GET(request: Request) {
   const entityGroups = params.getAll("entityGroup");
   const dataSources = params.getAll("dataSource");
 
-  const conditions: string[] = [];
-  const binds: Record<string, string> = {};
+  const workingDayInfo = timeKey ? await getBrf01WorkingDays(timeKey) : null;
+  const workingDay = params.get("workingDay") || workingDayInfo?.current || "WD1";
+
+  const conditions: string[] = ["working_day = :workingDay"];
+  const binds: Record<string, string> = { workingDay };
 
   if (timeKey) {
     conditions.push("time_key = :timeKey");
@@ -91,5 +95,5 @@ export async function GET(request: Request) {
     metrics: byCode.get(row.code) ?? EMPTY_METRICS,
   }));
 
-  return NextResponse.json({ entries });
+  return NextResponse.json({ entries, workingDay, workingDayHistory: workingDayInfo?.history ?? ["WD1"] });
 }

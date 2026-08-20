@@ -303,6 +303,14 @@ export default function PipelineDetailPage() {
   const [overrideSubmitting, setOverrideSubmitting] = useState(false);
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [workingDayInfo, setWorkingDayInfo] = useState<{ current: string; history: string[] } | null>(null);
+  const [selectedWorkingDay, setSelectedWorkingDay] = useState("");
+  const [showNewWdModal, setShowNewWdModal] = useState(false);
+  const [newWdValue, setNewWdValue] = useState("");
+  const [newWdNote, setNewWdNote] = useState("");
+  const [newWdSubmitting, setNewWdSubmitting] = useState(false);
+  const [newWdError, setNewWdError] = useState<string | null>(null);
+
   const defaultTimeKey = getReportingPeriod().timeKey;
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     if (typeof window !== "undefined") {
@@ -324,8 +332,9 @@ export default function PipelineDetailPage() {
   }
 
   const load = useCallback(async () => {
+    const wdParam = selectedWorkingDay ? `&workingDay=${encodeURIComponent(selectedWorkingDay)}` : "";
     const [stateRes, historyRes, usersRes, meRes] = await Promise.all([
-      fetch(`/api/pipeline-status/${pipelineId}?timeKey=${timeKey}`),
+      fetch(`/api/pipeline-status/${pipelineId}?timeKey=${timeKey}${wdParam}`),
       fetch(`/api/pipelines/${pipelineId}/procedures/history?timeKey=${timeKey}`),
       fetch("/api/users"),
       fetch("/api/auth/me"),
@@ -343,7 +352,20 @@ export default function PipelineDetailPage() {
     }
     setLoading(false);
     setLastUpdated(new Date());
+  }, [pipelineId, timeKey, selectedWorkingDay]);
+
+  const loadWorkingDay = useCallback(async () => {
+    const res = await fetch(`/api/pipeline-status/${pipelineId}/working-day?timeKey=${timeKey}`);
+    if (!res.ok) return;
+    const info: { current: string; history: string[] } = await res.json();
+    setWorkingDayInfo(info);
+    setSelectedWorkingDay((cur) => (cur && info.history.includes(cur) ? cur : info.current));
   }, [pipelineId, timeKey]);
+
+  useEffect(() => {
+    if (!Number.isFinite(pipelineId)) return;
+    loadWorkingDay();
+  }, [pipelineId, timeKey, loadWorkingDay]);
 
   useEffect(() => {
     if (!Number.isFinite(pipelineId)) return;
@@ -416,6 +438,32 @@ export default function PipelineDetailPage() {
     }
   }
 
+  async function handleStartNewWorkingDay() {
+    if (newWdSubmitting) return;
+    setNewWdSubmitting(true);
+    setNewWdError(null);
+    try {
+      const res = await fetch(`/api/pipeline-status/${pipelineId}/working-day`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timeKey, workingDay: newWdValue, note: newWdNote }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setNewWdError(data.error ?? "Could not start new working day.");
+        return;
+      }
+      setShowNewWdModal(false);
+      setSelectedWorkingDay(newWdValue.trim());
+      setNewWdValue("");
+      setNewWdNote("");
+      await loadWorkingDay();
+      load();
+    } finally {
+      setNewWdSubmitting(false);
+    }
+  }
+
   if (!username) return null;
 
   if (loading || !state) {
@@ -439,6 +487,17 @@ export default function PipelineDetailPage() {
   const currentGroupRunning = currentGroup?.procedures.find((p) => p.status === "IN_PROGRESS");
   const currentGroupStarted = currentGroupRunning?.startTime ?? null;
 
+  // Actions (run, approve, start a new working day) only ever apply to the
+  // current working day - viewing an older one is read-only history, so
+  // those controls stay disabled until the user switches back to current.
+  const isViewingCurrentWd = !workingDayInfo || selectedWorkingDay === workingDayInfo.current;
+
+  // A pipeline that's never actually run under its current working day has
+  // nothing to abandon by jumping straight to a different one - matches the
+  // backend's own "zero run rows" check, just for tailoring the modal copy.
+  const isFreshWorkingDay = allProcs.every((p) => p.startTime === null);
+  const canStartNewWd = isViewingCurrentWd && (state.overallStatus === "COMPLETED" || isFreshWorkingDay);
+
   // Approval only clears the upload-gate - it never marks a procedure done
   // or runs it early, so it can be granted any time (even for a procedure
   // several steps away) without letting anything jump the queue: Run
@@ -446,6 +505,7 @@ export default function PipelineDetailPage() {
   // each SEQUENTIAL group's own sort order, one procedure at a time.
   function canApprove(p: GroupRunState["procedures"][number]): boolean {
     return (
+      isViewingCurrentWd &&
       p.proc.dependsOnDataset !== null &&
       p.status !== "COMPLETED" &&
       p.status !== "IN_PROGRESS" &&
@@ -477,6 +537,8 @@ export default function PipelineDetailPage() {
             </div>
             <p className="mt-1.5 text-sm text-zinc-500">
               {formatPickedDate(selectedDate)}{isCustomDate ? " (custom date)" : " cycle"} · {state.completedGroups} of {state.totalGroups} groups complete
+              {workingDayInfo && ` · ${selectedWorkingDay}`}
+              {workingDayInfo && !isViewingCurrentWd && " (historical)"}
             </p>
           </div>
 
@@ -504,6 +566,20 @@ export default function PipelineDetailPage() {
                 </button>
               )}
             </div>
+            {workingDayInfo && (
+              <select
+                value={selectedWorkingDay}
+                onChange={(e) => setSelectedWorkingDay(e.target.value)}
+                className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 outline-none"
+                title="Working day"
+              >
+                {workingDayInfo.history.map((wd) => (
+                  <option key={wd} value={wd}>
+                    {wd}{wd === workingDayInfo.current && wd !== "WD1" ? " (current)" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               onClick={() => setShowLog(true)}
               className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
@@ -515,7 +591,8 @@ export default function PipelineDetailPage() {
               <>
                 <button
                   onClick={() => handleRun("next")}
-                  disabled={running !== null || state.overallStatus === "COMPLETED"}
+                  disabled={running !== null || state.overallStatus === "COMPLETED" || !isViewingCurrentWd}
+                  title={!isViewingCurrentWd ? "Switch to the current working day to run" : undefined}
                   className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {running === "next" ? <IconLoader className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -523,7 +600,8 @@ export default function PipelineDetailPage() {
                 </button>
                 <button
                   onClick={() => handleRun("all")}
-                  disabled={running !== null || state.overallStatus === "COMPLETED"}
+                  disabled={running !== null || state.overallStatus === "COMPLETED" || !isViewingCurrentWd}
+                  title={!isViewingCurrentWd ? "Switch to the current working day to run" : undefined}
                   className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {running === "all" ? <IconLoader className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -542,7 +620,7 @@ export default function PipelineDetailPage() {
               {menuOpen && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-                  <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
+                  <div className="absolute right-0 z-20 mt-1 w-56 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
                     <button
                       onClick={() => router.push(`/pipeline-builder/${pipelineId}`)}
                       className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50"
@@ -550,6 +628,23 @@ export default function PipelineDetailPage() {
                       <IconPencil className="h-3.5 w-3.5" />
                       Edit in Pipeline Builder
                     </button>
+                    {isAdminUser && (
+                      <button
+                        onClick={() => {
+                          setMenuOpen(false);
+                          setNewWdValue("");
+                          setNewWdNote("");
+                          setNewWdError(null);
+                          setShowNewWdModal(true);
+                        }}
+                        disabled={!canStartNewWd}
+                        title={!canStartNewWd ? "The current working day must be fully completed first" : undefined}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300"
+                      >
+                        <IconCalendar className="h-3.5 w-3.5" />
+                        Start new working day
+                      </button>
+                    )}
                   </div>
                 </>
               )}
@@ -845,6 +940,68 @@ export default function PipelineDetailPage() {
           </div>
         );
       })()}
+
+      {showNewWdModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+            <p className="text-sm font-semibold text-zinc-900">
+              {isFreshWorkingDay ? "Set working day" : "Start new working day"}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              {isFreshWorkingDay ? (
+                <>
+                  This pipeline hasn&apos;t run for {formatPickedDate(selectedDate)} yet, so it can jump straight to
+                  any working day — useful if it&apos;s built specifically for a later working day (e.g. skipping
+                  procedures that only matter on WD1).
+                </>
+              ) : (
+                <>
+                  Currently on {workingDayInfo?.current}, fully completed. This moves the pipeline on to a new
+                  working day for {formatPickedDate(selectedDate)} — every procedure will need to run again, and
+                  {workingDayInfo?.current}&apos;s results stay exactly as they are.
+                </>
+              )}
+            </p>
+            <div className="mt-3 flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-zinc-700">Working day</label>
+              <input
+                value={newWdValue}
+                onChange={(e) => setNewWdValue(e.target.value)}
+                placeholder="e.g. WD2"
+                autoFocus
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+              />
+            </div>
+            <div className="mt-3 flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-zinc-700">Reason (required for the audit trail)</label>
+              <textarea
+                value={newWdNote}
+                onChange={(e) => setNewWdNote(e.target.value)}
+                rows={3}
+                placeholder="e.g. Posted GL correction for FX revaluation"
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+              />
+            </div>
+            {newWdError && <p className="mt-2 text-xs text-red-600">{newWdError}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setShowNewWdModal(false)}
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleStartNewWorkingDay}
+                disabled={newWdSubmitting || !newWdValue.trim() || !newWdNote.trim()}
+                className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {newWdSubmitting ? <IconLoader className="h-3.5 w-3.5 animate-spin" /> : null}
+                {newWdSubmitting ? "Starting…" : "Start working day"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

@@ -1,9 +1,11 @@
 import ExcelJS from "exceljs";
 import { getBrf01Detail, type Brf01DetailRow } from "@/lib/brf01Detail";
 import { REPORT_HEADER_FILL, writeFilterSummaryBlock, applyDataRowBorder } from "@/lib/excelReportTemplate";
+import { getBrf01WorkingDays } from "@/lib/brf01Trend";
 
 const COLUMNS: { key: keyof Brf01DetailRow; header: string; width: number }[] = [
   { key: "timeKey", header: "Time Key", width: 12 },
+  { key: "workingDay", header: "Working Day", width: 12 },
   { key: "entityGroup", header: "Entity Group", width: 14 },
   { key: "dataSource", header: "Data Source", width: 12 },
   { key: "lineNo", header: "Line No", width: 10 },
@@ -38,7 +40,9 @@ export async function GET(request: Request) {
     return new Response("Missing or invalid lineNo/resident/currency.", { status: 400 });
   }
 
-  const rows = await getBrf01Detail({ timeKey, entityGroups, dataSources, lineNo, resident, currency });
+  const workingDay = params.get("workingDay") || (timeKey ? (await getBrf01WorkingDays(timeKey)).current : "WD1");
+
+  const rows = await getBrf01Detail({ timeKey, workingDay, entityGroups, dataSources, lineNo, resident, currency });
 
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("BRF 01 - Detail");
@@ -54,6 +58,9 @@ export async function GET(request: Request) {
   sheet.getCell(filterRow - 1, 7).value = "Currency:";
   sheet.getCell(filterRow - 1, 7).font = { bold: true };
   sheet.getCell(filterRow - 1, 8).value = currency;
+  sheet.getCell(filterRow - 1, 10).value = "Working day:";
+  sheet.getCell(filterRow - 1, 10).font = { bold: true };
+  sheet.getCell(filterRow - 1, 11).value = workingDay;
 
   sheet.columns = COLUMNS.map((c) => ({ key: c.key, width: c.width }));
 
@@ -73,7 +80,7 @@ export async function GET(request: Request) {
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
-  const filenameParts = [lineNo.replace(/\./g, "_"), resident, currency, timeKey || "all"];
+  const filenameParts = [lineNo.replace(/\./g, "_"), resident, currency, timeKey || "all", workingDay];
 
   return new Response(buffer, {
     headers: {

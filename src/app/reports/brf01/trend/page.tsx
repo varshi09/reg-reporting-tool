@@ -238,11 +238,17 @@ function readInitialTimeKey(): string {
   return new URLSearchParams(window.location.search).get("timeKey") ?? "";
 }
 
+type WdInfo = { current: string; history: string[] };
+
 export default function Brf01TrendPage() {
   const [context] = useState<Context>(readContext);
   const [periods, setPeriods] = useState<string[] | null>(null);
   const [currentPeriod, setCurrentPeriod] = useState(readInitialTimeKey);
   const [comparePeriod, setComparePeriod] = useState("");
+  const [currentWdInfo, setCurrentWdInfo] = useState<WdInfo | null>(null);
+  const [compareWdInfo, setCompareWdInfo] = useState<WdInfo | null>(null);
+  const [selectedCurrentWd, setSelectedCurrentWd] = useState("");
+  const [selectedCompareWd, setSelectedCompareWd] = useState("");
   const [entries, setEntries] = useState<Brf01TrendEntry[] | null>(null);
   const [showTable, setShowTable] = useState(false);
 
@@ -269,19 +275,44 @@ export default function Brf01TrendPage() {
     });
   }, [periods, currentPeriod]);
 
+  // Each period has its own independent working-day history - fetched
+  // fresh whenever that side's period changes, defaulting to that
+  // period's own latest working day.
   useEffect(() => {
-    if (!currentPeriod || !comparePeriod) return;
+    if (!currentPeriod) return;
+    fetch(`/api/brf01/working-days?timeKey=${currentPeriod}`)
+      .then((r) => r.json())
+      .then((info: WdInfo) => {
+        setCurrentWdInfo(info);
+        setSelectedCurrentWd((cur) => (cur && info.history.includes(cur) ? cur : info.current));
+      });
+  }, [currentPeriod]);
+
+  useEffect(() => {
+    if (!comparePeriod) return;
+    fetch(`/api/brf01/working-days?timeKey=${comparePeriod}`)
+      .then((r) => r.json())
+      .then((info: WdInfo) => {
+        setCompareWdInfo(info);
+        setSelectedCompareWd((cur) => (cur && info.history.includes(cur) ? cur : info.current));
+      });
+  }, [comparePeriod]);
+
+  useEffect(() => {
+    if (!currentPeriod || !comparePeriod || !selectedCurrentWd || !selectedCompareWd) return;
     const params = new URLSearchParams();
     context.entityGroups.forEach((eg) => params.append("entityGroup", eg));
     context.dataSources.forEach((ds) => params.append("dataSource", ds));
     params.set("currentTimeKey", currentPeriod);
     params.set("previousTimeKey", comparePeriod);
+    params.set("currentWorkingDay", selectedCurrentWd);
+    params.set("previousWorkingDay", selectedCompareWd);
 
     setEntries(null);
     fetch(`/api/brf01/trend?${params.toString()}`)
       .then((r) => r.json())
       .then((data) => setEntries(data.entries ?? []));
-  }, [currentPeriod, comparePeriod, context]);
+  }, [currentPeriod, comparePeriod, selectedCurrentWd, selectedCompareWd, context]);
 
   return (
     <AppShell active="/reports" title="BRF 01 - Trend Analysis">
@@ -315,6 +346,26 @@ export default function Brf01TrendPage() {
               </select>
             </div>
 
+            {currentWdInfo && (
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="currentWd" className="text-sm font-medium text-black">
+                  Working day
+                </label>
+                <select
+                  id="currentWd"
+                  value={selectedCurrentWd}
+                  onChange={(e) => setSelectedCurrentWd(e.target.value)}
+                  className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-black outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
+                >
+                  {currentWdInfo.history.map((wd) => (
+                    <option key={wd} value={wd}>
+                      {wd}{wd === currentWdInfo.current && wd !== "WD1" ? " (current)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="flex flex-col gap-1.5">
               <label htmlFor="comparePeriod" className="text-sm font-medium text-black">
                 Compare to
@@ -332,6 +383,26 @@ export default function Brf01TrendPage() {
                 ))}
               </select>
             </div>
+
+            {compareWdInfo && (
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="compareWd" className="text-sm font-medium text-black">
+                  Working day
+                </label>
+                <select
+                  id="compareWd"
+                  value={selectedCompareWd}
+                  onChange={(e) => setSelectedCompareWd(e.target.value)}
+                  className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-black outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
+                >
+                  {compareWdInfo.history.map((wd) => (
+                    <option key={wd} value={wd}>
+                      {wd}{wd === compareWdInfo.current && wd !== "WD1" ? " (current)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           {periods && periods.length < 2 && (
             <p className="mt-2 text-sm text-amber-700">Only one period has data — nothing to compare yet.</p>
@@ -342,8 +413,8 @@ export default function Brf01TrendPage() {
           const leaf = entries.filter((e) => !e.isHeader);
           const sum = (pick: (e: Brf01TrendEntry) => number | null) =>
             leaf.reduce((total, e) => total + (pick(e) ?? 0), 0);
-          const curLabel = formatPeriodLabel(currentPeriod);
-          const prevLabel = formatPeriodLabel(comparePeriod);
+          const curLabel = `${formatPeriodLabel(currentPeriod)} (${selectedCurrentWd})`;
+          const prevLabel = `${formatPeriodLabel(comparePeriod)} (${selectedCompareWd})`;
 
           return (
             <div className="rounded-lg border border-zinc-200 bg-white shadow-sm p-5">
@@ -396,10 +467,10 @@ export default function Brf01TrendPage() {
                     <th rowSpan={2} className="border border-sky-400 bg-sky-300 px-2 py-2 align-bottom font-semibold text-sky-950">Line No</th>
                     <th rowSpan={2} className="border border-sky-400 bg-sky-300 px-2 py-2 align-bottom font-semibold text-sky-950">Description</th>
                     <th colSpan={2} className="border border-sky-400 bg-sky-300 px-2 py-1 text-center font-semibold text-sky-950">
-                      {formatPeriodLabel(currentPeriod)}
+                      {formatPeriodLabel(currentPeriod)} ({selectedCurrentWd})
                     </th>
                     <th colSpan={2} className="border border-sky-400 bg-sky-300 px-2 py-1 text-center font-semibold text-sky-950">
-                      {formatPeriodLabel(comparePeriod)}
+                      {formatPeriodLabel(comparePeriod)} ({selectedCompareWd})
                     </th>
                     <th colSpan={3} className="border border-sky-400 bg-sky-300 px-2 py-1 text-center font-semibold text-sky-950">Variance</th>
                   </tr>

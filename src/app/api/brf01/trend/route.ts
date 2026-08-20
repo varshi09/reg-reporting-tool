@@ -5,6 +5,8 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const currentTimeKey = params.get("currentTimeKey") ?? "";
   const previousTimeKey = params.get("previousTimeKey") ?? "";
+  const currentWorkingDay = params.get("currentWorkingDay") || undefined;
+  const previousWorkingDay = params.get("previousWorkingDay") || undefined;
   const entityGroups = params.getAll("entityGroup");
   const dataSources = params.getAll("dataSource");
 
@@ -12,6 +14,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "currentTimeKey and previousTimeKey are required." }, { status: 400 });
   }
 
-  const entries = await getBrf01Trend({ currentTimeKey, previousTimeKey, entityGroups, dataSources });
+  const entries = await getBrf01Trend({
+    currentTimeKey, previousTimeKey, currentWorkingDay, previousWorkingDay, entityGroups, dataSources,
+  });
   return NextResponse.json({ entries });
 }

@@ -22,6 +22,7 @@ export type GroupProcedure = {
   packageName: string | null;
   takesDateParam: boolean;
   takesScopeParam: boolean;
+  takesWorkingDayParam: boolean;
   sortOrder: number;
   dependsOnDataset: string | null;
 };
@@ -41,6 +42,7 @@ export type CatalogProcedure = {
   packageName: string | null;
   takesDateParam: boolean;
   takesScopeParam: boolean;
+  takesWorkingDayParam: boolean;
 };
 
 // ─── Read ──────────────────────────────────────────────────────────────────
@@ -55,7 +57,7 @@ export async function getPipelineStructure(pipelineId: number): Promise<Pipeline
   type ProcRow = {
     PIPELINE_PROCEDURE_ID: number; PROCEDURE_ID: number;
     PROCEDURE_NAME: string; PACKAGE_NAME: string | null;
-    TAKES_DATE_PARAM: number; TAKES_SCOPE_PARAM: number;
+    TAKES_DATE_PARAM: number; TAKES_SCOPE_PARAM: number; TAKES_WORKING_DAY_PARAM: number;
     SORT_ORDER: number; DEPENDS_ON_DATASET: string | null;
     GROUP_ID: number;
   };
@@ -77,7 +79,7 @@ export async function getPipelineStructure(pipelineId: number): Promise<Pipeline
 
     const procRes = await connection.execute<ProcRow>(
       `SELECT pp.id AS pipeline_procedure_id, pp.procedure_id, p.procedure_name, p.package_name,
-              p.takes_date_param, p.takes_scope_param, pp.sort_order,
+              p.takes_date_param, p.takes_scope_param, p.takes_working_day_param, pp.sort_order,
               pp.depends_on_dataset, pp.group_id
        FROM PIPELINE_PROCEDURES pp
        JOIN PROCEDURES p ON p.id = pp.procedure_id
@@ -104,6 +106,7 @@ export async function getPipelineStructure(pipelineId: number): Promise<Pipeline
           packageName: p.PACKAGE_NAME,
           takesDateParam: p.TAKES_DATE_PARAM === 1,
           takesScopeParam: p.TAKES_SCOPE_PARAM === 1,
+          takesWorkingDayParam: p.TAKES_WORKING_DAY_PARAM === 1,
           sortOrder: p.SORT_ORDER,
           dependsOnDataset: p.DEPENDS_ON_DATASET,
         })),
@@ -170,13 +173,15 @@ export async function getCatalogProcedures(): Promise<CatalogProcedure[]> {
     PROCEDURE_NAME: string;
     TAKES_DATE_PARAM: number;
     TAKES_SCOPE_PARAM: number;
+    TAKES_WORKING_DAY_PARAM: number;
   };
 
   const live: LiveRow[] = await withConnection(async (connection) => {
     const result = await connection.execute<LiveRow>(
       `SELECT p.object_name AS package_name, p.procedure_name,
               MAX(CASE WHEN a.argument_name = 'P_DATE' THEN 1 ELSE 0 END) AS takes_date_param,
-              MAX(CASE WHEN a.argument_name = 'P_SCOPE' THEN 1 ELSE 0 END) AS takes_scope_param
+              MAX(CASE WHEN a.argument_name = 'P_SCOPE' THEN 1 ELSE 0 END) AS takes_scope_param,
+              MAX(CASE WHEN a.argument_name = 'P_WORKING_DAY' THEN 1 ELSE 0 END) AS takes_working_day_param
        FROM USER_PROCEDURES p
        LEFT JOIN USER_ARGUMENTS a
          ON a.package_name = p.object_name AND a.object_name = p.procedure_name
@@ -194,14 +199,16 @@ export async function getCatalogProcedures(): Promise<CatalogProcedure[]> {
          USING (SELECT :packageName AS package_name, :procedureName AS procedure_name FROM dual) src
          ON (tgt.package_name = src.package_name AND tgt.procedure_name = src.procedure_name)
          WHEN MATCHED THEN UPDATE SET
-           takes_date_param = :takesDateParam, takes_scope_param = :takesScopeParam
-         WHEN NOT MATCHED THEN INSERT (procedure_name, package_name, takes_date_param, takes_scope_param, created_by)
-           VALUES (:procedureName, :packageName, :takesDateParam, :takesScopeParam, 'system-sync')`,
+           takes_date_param = :takesDateParam, takes_scope_param = :takesScopeParam,
+           takes_working_day_param = :takesWorkingDayParam
+         WHEN NOT MATCHED THEN INSERT (procedure_name, package_name, takes_date_param, takes_scope_param, takes_working_day_param, created_by)
+           VALUES (:procedureName, :packageName, :takesDateParam, :takesScopeParam, :takesWorkingDayParam, 'system-sync')`,
         {
           packageName: row.PACKAGE_NAME,
           procedureName: row.PROCEDURE_NAME,
           takesDateParam: row.TAKES_DATE_PARAM,
           takesScopeParam: row.TAKES_SCOPE_PARAM,
+          takesWorkingDayParam: row.TAKES_WORKING_DAY_PARAM,
         },
         { autoCommit: false }
       );
@@ -252,6 +259,7 @@ export async function getCatalogProcedures(): Promise<CatalogProcedure[]> {
       packageName: r.PACKAGE_NAME,
       takesDateParam: l.TAKES_DATE_PARAM === 1,
       takesScopeParam: l.TAKES_SCOPE_PARAM === 1,
+      takesWorkingDayParam: l.TAKES_WORKING_DAY_PARAM === 1,
     };
   });
 }
@@ -455,6 +463,7 @@ export type PipelineRunState = {
   createdBy: string;
   createdAt: string;
   timeKey: string;
+  workingDay: string;
   groups: GroupRunState[];
   overallStatus: PipelineStatus;
   completedGroups: number;
@@ -474,10 +483,13 @@ function computeGroupStatus(statuses: PipelineStatus[]): PipelineStatus {
 
 export async function getPipelineRunState(
   pipelineId: number,
-  timeKey: string
+  timeKey: string,
+  workingDay?: string
 ): Promise<PipelineRunState | null> {
   const structure = await getPipelineStructure(pipelineId);
   if (!structure) return null;
+
+  const resolvedWorkingDay = workingDay ?? (await getCurrentWorkingDay(pipelineId, timeKey));
 
   type RunRow = {
     PROCEDURE_ID: number;
@@ -496,9 +508,9 @@ export async function getPipelineRunState(
          SELECT procedure_id, status, override_type, start_time, end_time, note, updated_by,
                 ROW_NUMBER() OVER (PARTITION BY procedure_id ORDER BY updated_at DESC NULLS LAST) AS rn
          FROM PIPELINE_PROCEDURE_RUNS
-         WHERE pipeline_id = :pipelineId AND time_key = :timeKey
+         WHERE pipeline_id = :pipelineId AND time_key = :timeKey AND working_day = :workingDay
        ) WHERE rn = 1`,
-      { pipelineId, timeKey }
+      { pipelineId, timeKey, workingDay: resolvedWorkingDay }
     );
     return r.rows ?? [];
   });
@@ -575,6 +587,7 @@ export async function getPipelineRunState(
     createdBy: structure.createdBy,
     createdAt: structure.createdAt,
     timeKey,
+    workingDay: resolvedWorkingDay,
     groups,
     overallStatus: computeGroupStatus(groups.map((g) => g.groupStatus)),
     completedGroups,
@@ -594,12 +607,123 @@ export async function getAllPipelinesRunState(timeKey: string): Promise<Pipeline
   return states.filter((s): s is PipelineRunState => s !== null);
 }
 
+// ─── Working days ────────────────────────────────────────────────────────────
+// A working day (WD1, WD2, ...) groups everything produced by one run of the
+// pipeline for a given time_key - the WD1..WD5 adjustment-window convention
+// used for regulatory resubmissions. WD1 is implicit (the default before any
+// explicit action), so a fresh period never needs bootstrapping. Moving to a
+// new working day is always a deliberate action (see startNewWorkingDay),
+// never an automatic side effect of re-running - a retry after a failure
+// stays on the same working day.
+
+export type WorkingDayInfo = {
+  current: string;
+  history: string[];
+};
+
+/** Sorts "WD1".."WD10" numerically where possible - plain string sort would put "WD10" before "WD2". */
+export function sortWorkingDays(values: string[]): string[] {
+  return [...values].sort((a, b) => {
+    const na = /^WD(\d+)$/i.exec(a);
+    const nb = /^WD(\d+)$/i.exec(b);
+    if (na && nb) return Number(na[1]) - Number(nb[1]);
+    return a.localeCompare(b);
+  });
+}
+
+export async function getCurrentWorkingDay(pipelineId: number, timeKey: string): Promise<string> {
+  const rows: { WORKING_DAY: string }[] = await withConnection(async (conn) => {
+    const r = await conn.execute<{ WORKING_DAY: string }>(
+      `SELECT working_day FROM PIPELINE_VERSIONS
+       WHERE pipeline_id = :pipelineId AND time_key = :timeKey
+       ORDER BY created_at DESC FETCH FIRST 1 ROWS ONLY`,
+      { pipelineId, timeKey }
+    );
+    return r.rows ?? [];
+  });
+  return rows[0]?.WORKING_DAY ?? "WD1";
+}
+
+export async function listWorkingDays(pipelineId: number, timeKey: string): Promise<WorkingDayInfo> {
+  const current = await getCurrentWorkingDay(pipelineId, timeKey);
+  const rows: { WORKING_DAY: string }[] = await withConnection(async (conn) => {
+    const r = await conn.execute<{ WORKING_DAY: string }>(
+      `SELECT DISTINCT working_day FROM PIPELINE_PROCEDURE_RUNS
+       WHERE pipeline_id = :pipelineId AND time_key = :timeKey`,
+      { pipelineId, timeKey }
+    );
+    return r.rows ?? [];
+  });
+  const history = new Set(rows.map((r) => r.WORKING_DAY));
+  history.add(current);
+  return { current, history: sortWorkingDays(Array.from(history)) };
+}
+
+/**
+ * Explicitly moves a pipeline+period on to a new working day - never
+ * automatic. Always requires a note, since every working day (including a
+ * fresh WD1) needs a reason on record for audit purposes - whether that's
+ * "posted GL correction" or "this pipeline skips procedures not needed past
+ * WD1, using it standalone for WD2 onward".
+ *
+ * Jumping straight to any working day - not just the next sequential one -
+ * is allowed whenever the current working day has never actually been run:
+ * a genuinely fresh pipeline has nothing to abandon. A pipeline that's
+ * mid-run, blocked, or already completed a working day must still finish
+ * (or explicitly move on from) that working day first, so a half-finished
+ * run can't be silently skipped.
+ */
+export async function startNewWorkingDay(
+  pipelineId: number,
+  timeKey: string,
+  workingDay: string,
+  note: string,
+  createdBy: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const trimmedWd = workingDay.trim();
+  const trimmedNote = note.trim();
+  if (!trimmedWd) return { ok: false, error: "Enter a working day." };
+  if (!trimmedNote) return { ok: false, error: "Enter a reason for this working day." };
+
+  const currentWd = await getCurrentWorkingDay(pipelineId, timeKey);
+  if (trimmedWd === currentWd) {
+    return { ok: false, error: `Already on ${currentWd}.` };
+  }
+
+  const state = await getPipelineRunState(pipelineId, timeKey, currentWd);
+  if (!state) return { ok: false, error: "Pipeline not found." };
+  if (state.overallStatus !== "COMPLETED") {
+    const hasAnyRunRows: boolean = await withConnection(async (conn) => {
+      const r = await conn.execute<{ C: number }>(
+        `SELECT COUNT(*) AS c FROM PIPELINE_PROCEDURE_RUNS
+         WHERE pipeline_id = :pipelineId AND time_key = :timeKey AND working_day = :workingDay`,
+        { pipelineId, timeKey, workingDay: currentWd }
+      );
+      return (r.rows?.[0]?.C ?? 0) > 0;
+    });
+    if (hasAnyRunRows) {
+      return { ok: false, error: `${currentWd} must be fully completed before starting a new working day.` };
+    }
+  }
+
+  await withConnection((conn) =>
+    conn.execute(
+      `INSERT INTO PIPELINE_VERSIONS (pipeline_id, time_key, working_day, note, created_by)
+       VALUES (:pipelineId, :timeKey, :workingDay, :note, :createdBy)`,
+      { pipelineId, timeKey, workingDay: trimmedWd, note: trimmedNote, createdBy },
+      { autoCommit: true }
+    )
+  );
+  return { ok: true };
+}
+
 // ─── Execution ──────────────────────────────────────────────────────────────
 
 async function runGroupProcedure(
   pipelineId: number,
   proc: GroupProcedure,
   timeKey: string,
+  workingDay: string,
   triggeredBy: string,
   overrideType: string | null
 ): Promise<{ status: "COMPLETED" | "FAILED"; error?: string }> {
@@ -611,9 +735,9 @@ async function runGroupProcedure(
   const runId: number = await withConnection(async (conn) => {
     const existing = await conn.execute<{ ID: number; STATUS: string }>(
       `SELECT id, status FROM PIPELINE_PROCEDURE_RUNS
-       WHERE pipeline_id = :pipelineId AND procedure_id = :procedureId AND time_key = :timeKey
+       WHERE pipeline_id = :pipelineId AND procedure_id = :procedureId AND time_key = :timeKey AND working_day = :workingDay
        ORDER BY updated_at DESC FETCH FIRST 1 ROWS ONLY`,
-      { pipelineId, procedureId: proc.procedureId, timeKey }
+      { pipelineId, procedureId: proc.procedureId, timeKey, workingDay }
     );
     const latest = existing.rows?.[0];
 
@@ -628,13 +752,14 @@ async function runGroupProcedure(
     }
 
     const r = await conn.execute<{ ID: number[] }>(
-      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, start_time, updated_by)
-       VALUES (:pipelineId, :procedureId, :timeKey, 'IN_PROGRESS', :overrideType, LOCALTIMESTAMP, :updatedBy)
+      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, working_day, status, override_type, start_time, updated_by)
+       VALUES (:pipelineId, :procedureId, :timeKey, :workingDay, 'IN_PROGRESS', :overrideType, LOCALTIMESTAMP, :updatedBy)
        RETURNING id INTO :id`,
       {
         pipelineId,
         procedureId: proc.procedureId,
         timeKey,
+        workingDay,
         overrideType,
         updatedBy: triggeredBy,
         id: { dir: oracledb.BIND_OUT, type: oracledb.DB_TYPE_NUMBER },
@@ -649,12 +774,13 @@ async function runGroupProcedure(
     : proc.procedureName;
   const args: string[] = [];
   if (proc.takesDateParam) args.push("v_date");
+  if (proc.takesWorkingDayParam) args.push("v_working_day");
   if (proc.takesScopeParam) args.push("'ALL'");
   const call = args.length ? `${target}(${args.join(", ")});` : `${target};`;
-  const block = `DECLARE v_date VARCHAR2(20) := TO_CHAR(TO_DATE(:timeKey, 'YYYYMMDD'), 'DD-MON-YYYY'); BEGIN ${call} END;`;
+  const block = `DECLARE v_date VARCHAR2(20) := TO_CHAR(TO_DATE(:timeKey, 'YYYYMMDD'), 'DD-MON-YYYY'); v_working_day VARCHAR2(20) := :workingDay; BEGIN ${call} END;`;
 
   try {
-    await withConnection((conn) => conn.execute(block, { timeKey }, { autoCommit: true }));
+    await withConnection((conn) => conn.execute(block, { timeKey, workingDay }, { autoCommit: true }));
     await withConnection((conn) =>
       conn.execute(
         `UPDATE PIPELINE_PROCEDURE_RUNS SET status = 'COMPLETED', end_time = LOCALTIMESTAMP, updated_by = :updatedBy WHERE id = :id`,
@@ -695,7 +821,8 @@ export async function approveProcedureWithoutUpload(
   note: string,
   triggeredBy: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const state = await getPipelineRunState(pipelineId, timeKey);
+  const workingDay = await getCurrentWorkingDay(pipelineId, timeKey);
+  const state = await getPipelineRunState(pipelineId, timeKey, workingDay);
   if (!state) return { ok: false, error: "Pipeline not found." };
 
   const procState = state.groups.flatMap((g) => g.procedures).find((p) => p.proc.procedureId === procedureId);
@@ -715,9 +842,9 @@ export async function approveProcedureWithoutUpload(
 
   await withConnection((conn) =>
     conn.execute(
-      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, status, override_type, note, updated_by)
-       VALUES (:pipelineId, :procedureId, :timeKey, 'PENDING', 'PROCEED_WITHOUT_UPLOAD', :note, :updatedBy)`,
-      { pipelineId, procedureId, timeKey, note, updatedBy: triggeredBy },
+      `INSERT INTO PIPELINE_PROCEDURE_RUNS (pipeline_id, procedure_id, time_key, working_day, status, override_type, note, updated_by)
+       VALUES (:pipelineId, :procedureId, :timeKey, :workingDay, 'PENDING', 'PROCEED_WITHOUT_UPLOAD', :note, :updatedBy)`,
+      { pipelineId, procedureId, timeKey, workingDay, note, updatedBy: triggeredBy },
       { autoCommit: true }
     )
   );
@@ -743,7 +870,8 @@ export async function runNextInPipeline(
   timeKey: string,
   triggeredBy: string
 ): Promise<{ ran: string[]; blocked: string[]; failed: string[] }> {
-  const state = await getPipelineRunState(pipelineId, timeKey);
+  const workingDay = await getCurrentWorkingDay(pipelineId, timeKey);
+  const state = await getPipelineRunState(pipelineId, timeKey, workingDay);
   if (!state || state.groups.length === 0) return { ran: [], blocked: [], failed: [] };
 
   const targetGroup = state.groups.find((g) => g.groupStatus !== "COMPLETED");
@@ -759,7 +887,7 @@ export async function runNextInPipeline(
     );
     targetGroup.procedures.filter((p) => p.isBlocked).forEach((p) => blocked.push(p.proc.procedureName));
     const results = await Promise.all(
-      eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy, p.overrideType))
+      eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, workingDay, triggeredBy, p.overrideType))
     );
     eligible.forEach((p, i) => {
       if (results[i].status === "COMPLETED") ran.push(p.proc.procedureName);
@@ -771,7 +899,7 @@ export async function runNextInPipeline(
       const stuck = targetGroup.procedures.find((p) => p.status !== "COMPLETED");
       if (stuck) blocked.push(stuck.proc.procedureName);
     } else if (next) {
-      const result = await runGroupProcedure(pipelineId, next.proc, timeKey, triggeredBy, next.overrideType);
+      const result = await runGroupProcedure(pipelineId, next.proc, timeKey, workingDay, triggeredBy, next.overrideType);
       if (result.status === "COMPLETED") ran.push(next.proc.procedureName);
       else failed.push(next.proc.procedureName);
     }
@@ -788,12 +916,13 @@ export async function runAllInPipeline(
   const structure = await getPipelineStructure(pipelineId);
   if (!structure) return { ran: [], blocked: [], failed: [] };
 
+  const workingDay = await getCurrentWorkingDay(pipelineId, timeKey);
   const allRan: string[] = [];
   const allBlocked: string[] = [];
   const allFailed: string[] = [];
 
   for (const group of structure.groups) {
-    const freshState = await getPipelineRunState(pipelineId, timeKey);
+    const freshState = await getPipelineRunState(pipelineId, timeKey, workingDay);
     if (!freshState) break;
 
     const groupState = freshState.groups.find((g) => g.group.id === group.id);
@@ -813,7 +942,7 @@ export async function runAllInPipeline(
         groupBlockedOrFailed = true;
       });
       const results = await Promise.all(
-        eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, triggeredBy, p.overrideType))
+        eligible.map((p) => runGroupProcedure(pipelineId, p.proc, timeKey, workingDay, triggeredBy, p.overrideType))
       );
       eligible.forEach((p, i) => {
         if (results[i].status === "COMPLETED") allRan.push(p.proc.procedureName);
@@ -834,7 +963,7 @@ export async function runAllInPipeline(
           break;
         }
         if (!next) break; // group fully complete
-        const result = await runGroupProcedure(pipelineId, next.proc, timeKey, triggeredBy, next.overrideType);
+        const result = await runGroupProcedure(pipelineId, next.proc, timeKey, workingDay, triggeredBy, next.overrideType);
         if (result.status === "COMPLETED") {
           allRan.push(next.proc.procedureName);
           procedures = procedures.map((p) =>

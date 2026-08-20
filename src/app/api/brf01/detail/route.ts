@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBrf01Detail } from "@/lib/brf01Detail";
+import { getBrf01WorkingDays } from "@/lib/brf01Trend";
 
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
@@ -18,6 +19,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "currency must be 'AED' or 'FCY'." }, { status: 400 });
   }
 
-  const rows = await getBrf01Detail({ timeKey, entityGroups, dataSources, lineNo, resident, currency });
+  const workingDay = params.get("workingDay") || (timeKey ? (await getBrf01WorkingDays(timeKey)).current : "WD1");
+
+  const rows = await getBrf01Detail({ timeKey, workingDay, entityGroups, dataSources, lineNo, resident, currency });
   return NextResponse.json({ rows });
 }
