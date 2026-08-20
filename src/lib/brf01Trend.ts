@@ -50,70 +50,81 @@ export async function getBrf01WorkingDays(timeKey: string): Promise<{ current: s
   return { current: history[history.length - 1] ?? "WD1", history: history.length ? history : ["WD1"] };
 }
 
+export type Brf01PeriodNode = { timeKey: string; workingDays: string[] };
+
+/** Every period paired with its own working days, newest period first - the tree the multi-select picker renders. */
+export async function getBrf01PeriodHierarchy(): Promise<Brf01PeriodNode[]> {
+  const rows: { TIME_KEY: string; WORKING_DAY: string }[] = await withConnection(async (connection) => {
+    const result = await connection.execute<{ TIME_KEY: string; WORKING_DAY: string }>(
+      `SELECT DISTINCT time_key, working_day FROM BRF01_SUMMARY ORDER BY time_key DESC`
+    );
+    return result.rows ?? [];
+  });
+  const byPeriod = new Map<string, string[]>();
+  for (const r of rows) {
+    const list = byPeriod.get(r.TIME_KEY) ?? [];
+    list.push(r.WORKING_DAY);
+    byPeriod.set(r.TIME_KEY, list);
+  }
+  return [...byPeriod.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    .map(([timeKey, workingDays]) => ({ timeKey, workingDays: sortWorkingDays(workingDays) }));
+}
+
+export type Brf01TrendSelection = { timeKey: string; workingDay: string };
+
+export type Brf01TrendSeriesEntry = {
+  timeKey: string;
+  workingDay: string;
+  accounts: number | null;
+  amount: number | null;
+};
+
 export type Brf01TrendEntry = {
   code: string;
   description: string;
   isHeader: boolean;
-  currentAccounts: number | null;
-  currentAmount: number | null;
-  previousAccounts: number | null;
-  previousAmount: number | null;
-  varianceAccounts: number | null;
-  varianceAmount: number | null;
-  variancePct: number | null;
-};
-
-type TrendRow = {
-  LINE_NO: string;
-  CUR_ACCOUNTS: number | null;
-  CUR_AMOUNT: number | null;
-  PREV_ACCOUNTS: number | null;
-  PREV_AMOUNT: number | null;
+  series: Brf01TrendSeriesEntry[];
 };
 
 /**
- * Total accounts/amount per line for two periods, plus the variance between
- * them - a movement/trend view, not the full Resident/Non-Resident x AED/FCY
- * breakdown (that's what the per-cell drill-down is for).
+ * Total accounts/amount per line for any number of (period, working day)
+ * selections - a movement/trend view, not the full Resident/Non-Resident x
+ * AED/FCY breakdown (that's what the per-cell drill-down is for). Each
+ * selection is its own series, in the order given; the caller decides what
+ * to do with more than two (e.g. drop the variance table, keep the charts).
  */
 export async function getBrf01Trend(params: {
-  currentTimeKey: string;
-  previousTimeKey: string;
-  currentWorkingDay?: string;
-  previousWorkingDay?: string;
+  selections: Brf01TrendSelection[];
   entityGroups: string[];
   dataSources: string[];
 }): Promise<Brf01TrendEntry[]> {
-  // Each period defaults to its own latest (current) working day - "the
-  // as-reported figure for that period" - since WD1..WD5 tracks each
-  // period's own adjustment window independently, but either side can be
-  // pinned to an explicit working day to compare a specific adjustment.
-  const [currentWd, previousWd] = await Promise.all([
-    params.currentWorkingDay ?? getBrf01WorkingDays(params.currentTimeKey).then((w) => w.current),
-    params.previousWorkingDay ?? getBrf01WorkingDays(params.previousTimeKey).then((w) => w.current),
-  ]);
+  if (params.selections.length === 0) {
+    return BRF01_TEMPLATE.map((t) => ({ code: t.code, description: t.description, isHeader: t.isHeader, series: [] }));
+  }
 
-  const binds: Record<string, string> = {
-    currentTimeKey: params.currentTimeKey,
-    currentWd,
-    previousTimeKey: params.previousTimeKey,
-    previousWd,
-  };
-  const conditions: string[] = ["time_key IN (:currentTimeKey, :previousTimeKey)"];
+  const binds: Record<string, string> = {};
+  const selectParts: string[] = [];
+  const whereParts: string[] = [];
+  params.selections.forEach((sel, i) => {
+    binds[`tk${i}`] = sel.timeKey;
+    binds[`wd${i}`] = sel.workingDay;
+    selectParts.push(
+      `SUM(CASE WHEN time_key = :tk${i} AND working_day = :wd${i} THEN total_accounts ELSE 0 END) AS s${i}_accounts`,
+      `SUM(CASE WHEN time_key = :tk${i} AND working_day = :wd${i} THEN total_amount ELSE 0 END) AS s${i}_amount`
+    );
+    whereParts.push(`(time_key = :tk${i} AND working_day = :wd${i})`);
+  });
 
+  const conditions = [`(${whereParts.join(" OR ")})`];
   const entityClause = buildInClause("entity_group", params.entityGroups, "eg", binds);
   if (entityClause) conditions.push(entityClause);
-
   const dataSourceClause = buildInClause("data_source", params.dataSources, "ds", binds);
   if (dataSourceClause) conditions.push(dataSourceClause);
 
-  const rows: TrendRow[] = await withConnection(async (connection) => {
-    const result = await connection.execute<TrendRow>(
-      `SELECT line_no,
-              SUM(CASE WHEN time_key = :currentTimeKey AND working_day = :currentWd THEN total_accounts ELSE 0 END) AS cur_accounts,
-              SUM(CASE WHEN time_key = :currentTimeKey AND working_day = :currentWd THEN total_amount ELSE 0 END) AS cur_amount,
-              SUM(CASE WHEN time_key = :previousTimeKey AND working_day = :previousWd THEN total_accounts ELSE 0 END) AS prev_accounts,
-              SUM(CASE WHEN time_key = :previousTimeKey AND working_day = :previousWd THEN total_amount ELSE 0 END) AS prev_amount
+  const rows: Record<string, unknown>[] = await withConnection(async (connection) => {
+    const result = await connection.execute<Record<string, unknown>>(
+      `SELECT line_no, ${selectParts.join(", ")}
        FROM BRF01_SUMMARY
        WHERE ${conditions.join(" AND ")}
        GROUP BY line_no`,
@@ -122,35 +133,16 @@ export async function getBrf01Trend(params: {
     return result.rows ?? [];
   });
 
-  const byCode = new Map(rows.map((r) => [r.LINE_NO, r]));
+  const byCode = new Map(rows.map((r) => [r.LINE_NO as string, r]));
 
   return BRF01_TEMPLATE.map((templateRow) => {
     const row = byCode.get(templateRow.code);
-    const currentAmount = row?.CUR_AMOUNT ?? null;
-    const previousAmount = row?.PREV_AMOUNT ?? null;
-    const currentAccounts = row?.CUR_ACCOUNTS ?? null;
-    const previousAccounts = row?.PREV_ACCOUNTS ?? null;
-
-    const varianceAmount =
-      currentAmount !== null && previousAmount !== null ? currentAmount - previousAmount : null;
-    const varianceAccounts =
-      currentAccounts !== null && previousAccounts !== null ? currentAccounts - previousAccounts : null;
-    const variancePct =
-      varianceAmount !== null && previousAmount !== null && previousAmount !== 0
-        ? (varianceAmount / previousAmount) * 100
-        : null;
-
-    return {
-      code: templateRow.code,
-      description: templateRow.description,
-      isHeader: templateRow.isHeader,
-      currentAccounts,
-      currentAmount,
-      previousAccounts,
-      previousAmount,
-      varianceAccounts,
-      varianceAmount,
-      variancePct,
-    };
+    const series: Brf01TrendSeriesEntry[] = params.selections.map((sel, i) => ({
+      timeKey: sel.timeKey,
+      workingDay: sel.workingDay,
+      accounts: row ? ((row[`S${i}_ACCOUNTS`] as number | null) ?? null) : null,
+      amount: row ? ((row[`S${i}_AMOUNT`] as number | null) ?? null) : null,
+    }));
+    return { code: templateRow.code, description: templateRow.description, isHeader: templateRow.isHeader, series };
   });
 }
